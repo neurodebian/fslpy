@@ -19,20 +19,27 @@ X-Python-Version: >= 2.7
 Package: python-fsl
 Architecture: all
 Section: python
-Depends: ${misc:Depends},
+Depends: python-lxml,
+         python-nibabel,
+         ${misc:Depends},
          ${python:Depends},
+Recommends: python-wxgtk3.0
 Provides: ${python:Provides}
 Conflicts: fsl-melview (<= 1.0.1+git9-ge661e05~dfsg.1-1)
 Description: FSL Python library
+ Support library for FSL.
  .
  This package provides the Python 2 module.
 
 Package: python3-fsl
 Architecture: all
 Section: python
-Depends: ${misc:Depends},
+Depends: python3-lxml,
+         python3-nibabel,
+         ${misc:Depends},
          ${python3:Depends},
 Provides: ${python3:Provides}
 Description: FSL Python library
+ Support library for FSL.
  .
  This package provides the Python 3 module.
