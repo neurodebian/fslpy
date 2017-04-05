@@ -1,0 +1,38 @@
+Source: fslpy
+Maintainer: NeuroDebian Team <team@neuro.debian.net>
+Uploaders: Michael Hanke <mih@debian.org>
+Section: python
+Priority: optional
+Build-Depends: debhelper (>= 9),
+               dh-python,
+               python-all,
+               python3-all,
+               python-setuptools,
+               python3-setuptools,
+               python-pytest,
+               python3-pytest,
+               python-indexed-gzip,
+               python3-indexed-gzip,
+Standards-Version: 3.9.8
+X-Python-Version: >= 2.7
+
+Package: python-fsl
+Architecture: all
+Section: python
+Depends: ${misc:Depends},
+         ${python:Depends},
+Provides: ${python:Provides}
+Conflicts: fsl-melview (<= 1.0.1+git9-ge661e05~dfsg.1-1)
+Description: FSL Python library
+ .
+ This package provides the Python 2 module.
+
+Package: python3-fsl
+Architecture: all
+Section: python
+Depends: ${misc:Depends},
+         ${python3:Depends},
+Provides: ${python3:Provides}
+Description: FSL Python library
+ .
+ This package provides the Python 3 module.
