@@ -26,6 +26,11 @@ clean::
 	rm -rf .pybuild build
 	-rm -rf fslpy.egg-info/
 
+override_dh_install:
+	dh_install
+	# otherwise we get the binaries in both packages
+	rm -r debian/python3-fsl/usr/bin
+
 # make orig tarball from repository content
 get-orig-source:
 	# orig tarball, turn directory into something nicer
