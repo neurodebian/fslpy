@@ -1,0 +1,28 @@
+diff --git a/debian/control b/debian/control
+index 559b8a7f..cde1aac9 100644
+--- a/debian/control
++++ b/debian/control
+@@ -9,10 +9,6 @@ Build-Depends: debhelper (>= 9),
+                python3-all,
+                python-setuptools,
+                python3-setuptools,
+-               python-pytest,
+-               python3-pytest,
+-               python-pytest-runner,
+-               python3-pytest-runner,
+                python-indexed-gzip,
+                python3-indexed-gzip,
+                python-nibabel,
+diff --git a/debian/rules b/debian/rules
+index 17bab058..b3d8a1f2 100755
+--- a/debian/rules
++++ b/debian/rules
+@@ -13,7 +13,7 @@ gitver = $(shell [ -x /usr/bin/git ] && git describe --tags --match 'v[0-9].*' $
+ export DH_VERBOSE = 1
+ export PYBUILD_NAME = fsl
+ # tests are not PY3 compatible
+-export PYBUILD_DISABLE = test/python3
++export PYBUILD_DISABLE = test/python3 test/python2
+ export PYBUILD_TEST_ARGS = --niter 1 --ignore tests/test_image.py
+ 
+ # one ring to rule them all ...
