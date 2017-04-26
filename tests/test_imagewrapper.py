@@ -9,6 +9,7 @@ from __future__ import print_function
 
 import              collections
 import              random
+import              time
 import itertools as it
 import numpy     as np
 import nibabel   as nib
@@ -192,6 +193,7 @@ def applyCoverage(wrapper, coverage):
         sliceobjs.append(vol)
 
         wrapper[tuple(sliceobjs)]
+        _ImageWraper_busy_wait(wrapper)
 
     # Check that the image wrapper
     # has covered what we just told
@@ -284,6 +286,47 @@ def test_sliceTupleToSliceObj():
             sliceobj = (slice(x1, x2, 1), slice(y1, y2, 1), slice(z1, z2, 1))
 
             assert func(slices) == sliceobj
+
+
+def test_naninfrange():
+    # numinf, numnan, expectedResult
+    tests = [( 0,     0,    (0,      100)),
+             ( 0,     1,    (0,      100)),
+             ( 1,     0,    (0,      100)),
+             ( 1,     1,    (0,      100)),
+             ( 5,     5,    (0,      100)),
+             ( 0,    'all', (np.nan, np.nan)),
+             ('all',  0,    (np.nan, np.nan))]
+
+    # Test non floating point data as wll
+    data = np.linspace(0, 100, 100, dtype=np.uint32)
+    assert imagewrap.naninfrange(data) == (0, 100)
+
+    for numinf, numnan, expected in tests:
+        
+        data   = np.linspace(0, 100, 100)
+
+        if   numinf == 'all': data[:] = np.inf
+        elif numnan == 'all': data[:] = np.nan
+
+        nanoff = 1
+        if numinf != 'all':
+            for i in range(1, numinf + 1):
+                data[i] = np.inf
+            nanoff += numinf
+
+        if numnan != 'all':
+            for i in range(nanoff, numnan + nanoff):
+                data[i] = np.nan
+        
+        result = imagewrap.naninfrange(data)
+
+        if   np.isfinite(expected[0]): assert result[0] == expected[0]
+        elif np.isnan(   expected[0]): assert np.isnan(result[0])
+        elif np.isinf(   expected[0]): assert np.isinf(result[0])
+        if   np.isfinite(expected[1]): assert result[1] == expected[1]
+        elif np.isnan(   expected[1]): assert np.isnan(result[1])
+        elif np.isinf(   expected[1]): assert np.isinf(result[1]) 
 
 
 def test_adjustCoverage():
@@ -516,7 +559,16 @@ def test_calcExpansion(niters):
             _test_expansion(coverage, slices, vols, exps)
 
 
-def test_ImageWrapper_read(niters, seed):
+def _ImageWraper_busy_wait(wrapper, v=0):
+    tt = wrapper.getTaskThread()
+    if tt is not None:
+        tt.waitUntilIdle()
+
+def test_ImageWrapper_read_threaded(niters, seed):
+    _test_ImageWrapper_read(niters, seed, True)
+def test_ImageWrapper_read_unthreaded(niters, seed):
+    _test_ImageWrapper_read(niters, seed, False) 
+def _test_ImageWrapper_read(niters, seed, threaded):
 
     for _ in range(niters):
 
@@ -540,7 +592,9 @@ def test_ImageWrapper_read(niters, seed):
                               np.max(data[..., vol])))
 
         img     = nib.Nifti1Image(data, np.eye(4))
-        wrapper = imagewrap.ImageWrapper(img, loadData=False)
+        wrapper = imagewrap.ImageWrapper(img,
+                                         loadData=False,
+                                         threaded=threaded)
 
         # We're going to access data volumes 
         # through the image wrapper with a
@@ -563,6 +617,8 @@ def test_ImageWrapper_read(niters, seed):
                 if len(data.shape) >= 3: wrapper[..., vol]
                 else:                    wrapper[:, vol, 0]
 
+                _ImageWraper_busy_wait(wrapper, vol)
+
                 # The current known data range
                 # should be the min/max of
                 # all acccessed volumes so far
@@ -574,8 +630,11 @@ def test_ImageWrapper_read(niters, seed):
                 if j < nvols - 1: assert not wrapper.covered
                 else:             assert     wrapper.covered
 
-
-def test_ImageWrapper_write_out(niters, seed):
+def test_ImageWrapper_write_out_threaded(niters, seed):
+    _test_ImageWrapper_write_out(niters, seed, True)
+def test_ImageWrapper_write_out_unthreaded(niters, seed):
+    _test_ImageWrapper_write_out(niters, seed, False)
+def _test_ImageWrapper_write_out(niters, seed, threaded):
     # This is HORRIBLE
 
     loop = 0
@@ -603,7 +662,7 @@ def test_ImageWrapper_write_out(niters, seed):
         cov = random_coverage(shape, vol_limit=1)
 
         img     = nib.Nifti1Image(data, np.eye(4))
-        wrapper = imagewrap.ImageWrapper(img)
+        wrapper = imagewrap.ImageWrapper(img, threaded=threaded)
         applyCoverage(wrapper, cov)
         clo, chi = wrapper.dataRange
 
@@ -684,6 +743,7 @@ def test_ImageWrapper_write_out(niters, seed):
                 oldCov = wrapper.coverage(0)
 
                 wrapper[tuple(sliceobjs)] = newData
+                _ImageWraper_busy_wait(wrapper)
 
                 expLo, expHi = coverageDataRange(img.get_data(), cov, slices)
                 newLo, newHi = wrapper.dataRange
@@ -709,8 +769,12 @@ def test_ImageWrapper_write_out(niters, seed):
                 assert np.isclose(newHi, expHi)
             # print('--------------')
 
-            
-def test_ImageWrapper_write_in_overlap(niters, seed):
+
+def test_ImageWrapper_write_in_overlap_threaded(niters, seed):
+    _test_ImageWrapper_write_in_overlap(niters, seed, True)
+def test_ImageWrapper_write_in_overlap_unthreaded(niters, seed):
+    _test_ImageWrapper_write_in_overlap(niters, seed, False) 
+def _test_ImageWrapper_write_in_overlap(niters, seed, threaded):
 
     # Generate a bunch of random coverages
     for _ in range(niters):
@@ -773,7 +837,7 @@ def test_ImageWrapper_write_in_overlap(niters, seed):
                     rhi = rlo
 
                 img     = nib.Nifti1Image(np.copy(data), np.eye(4))
-                wrapper = imagewrap.ImageWrapper(img)
+                wrapper = imagewrap.ImageWrapper(img, threaded=threaded)
                 applyCoverage(wrapper, cov)
 
                 newData = np.linspace(rlo, rhi, np.prod(sliceshape))
@@ -799,6 +863,7 @@ def test_ImageWrapper_write_in_overlap(niters, seed):
                 expHi = expData[expCovSlice].max()
 
                 wrapper[tuple(sliceobjs)] = newData
+                _ImageWraper_busy_wait(wrapper)
 
                 newCov       = wrapper.coverage(0)
                 newLo, newHi = wrapper.dataRange
@@ -815,8 +880,12 @@ def test_ImageWrapper_write_in_overlap(niters, seed):
                 assert np.isclose(newLo, expLo)
                 assert np.isclose(newHi, expHi)
 
-            
-def test_ImageWrapper_write_different_volume(niters, seed):
+
+def test_ImageWrapper_write_different_volume_threaded(niters, seed):
+    _test_ImageWrapper_write_different_volume(niters, seed, True)
+def test_ImageWrapper_write_different_volume_unthreaded(niters, seed):
+    _test_ImageWrapper_write_different_volume(niters, seed, False)
+def _test_ImageWrapper_write_different_volume(niters, seed, threaded):
 
     for _ in range(niters):
 
@@ -936,7 +1005,7 @@ def test_ImageWrapper_write_different_volume(niters, seed):
             for rlo, rhi, (elo, ehi) in zip(loRanges, hiRanges, expected):
 
                 img     = nib.Nifti1Image(np.copy(data), np.eye(4))
-                wrapper = imagewrap.ImageWrapper(img)
+                wrapper = imagewrap.ImageWrapper(img, threaded=threaded)
                 applyCoverage(wrapper, cov)
 
                 oldLo, oldHi = wrapper.dataRange
@@ -949,6 +1018,7 @@ def test_ImageWrapper_write_different_volume(niters, seed):
                     ehi = max(newData.max(), oldHi) 
 
                 wrapper[tuple(sliceobjs)] = newData
+                _ImageWraper_busy_wait(wrapper)
 
                 newLo, newHi = wrapper.dataRange
 

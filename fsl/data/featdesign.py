@@ -130,14 +130,21 @@ class FEATFSFDesign(object):
     with FSL 5.0.9 and older.
     """
     
-    def __init__(self, featDir, settings=None):
+    def __init__(self, featDir, settings=None, loadVoxelwiseEVs=True):
         """Create a ``FEATFSFDesign``.
 
-        :arg featDir:      Path to the FEAT directory.
+        :arg featDir:          Path to the FEAT directory.
 
-        :arg settings:     A dictionary containing the FEAT analysis 
-                           settings from its ``design.fsf``. If not provided,
-                           is loaded via :func:`.featanalysis.loadSettings`.
+        :arg settings:         A dictionary containing the FEAT analysis 
+                               settings from its ``design.fsf``. If not 
+                               provided, is loaded via 
+                               :func:`.featanalysis.loadSettings`. 
+
+        :arg loadVoxelwiseEVs: If ``True`` (the default), image files
+                               for all voxelwise EVs are loaded. Otherwise
+                               they are not loaded, and all calls to
+                               meth:`getDesign` will contain the mean
+                               data for any voxelwise EV columns.
         """
 
         if settings is None:
@@ -146,7 +153,7 @@ class FEATFSFDesign(object):
 
         # Get the design matrix, and some
         # information about the analysis
-        designMatrix = loadDesignMat(featDir)
+        designMatrix = loadDesignMat(op.join(featDir, 'design.mat'))
         version      = float(settings['version'])
         level        = int(  settings['level'])
 
@@ -178,11 +185,13 @@ class FEATFSFDesign(object):
             if not isinstance(ev, (VoxelwiseEV, VoxelwiseConfoundEV)):
                 continue
 
+            ev.image = None 
+
             # The path to some voxelwise 
             # EVs may not be present - 
             # see the VoxelwisEV class.
-            if ev.filename is not None: ev.image = fslimage.Image(ev.filename)
-            else:                       ev.image = None
+            if loadVoxelwiseEVs and (ev.filename is not None):
+                ev.image = fslimage.Image(ev.filename)
 
 
     def getEVs(self):
@@ -195,10 +204,12 @@ class FEATFSFDesign(object):
     def getDesign(self, voxel=None):
         """Returns the design matrix for the specified voxel.
 
-        :arg voxel: A tuple containing the ``(x, y, z)`` voxel coordinates
-                    of interest. If ``None`` (the default), the design
-                    matrix is returned, with any voxelwise EV columns
-                    containing the mean voxelwise EV data.
+        :arg voxel: A tuple containing the ``(x, y, z)`` voxel coordinates of
+                    interest. If ``None`` (the default), or if this
+                    ``FEATFSFDesign`` was created with
+                    ``loadVoxelwiseEVs=False``, the design matrix is returned,
+                    with any voxelwise EV columns containing the mean
+                    voxelwise EV data.
         """
 
         design = np.array(self.__design)
@@ -216,8 +227,9 @@ class FEATFSFDesign(object):
             if ev.image is None:
                 log.warning('Voxel EV image missing '
                             'for ev {}'.format(ev.index))
+                continue
 
-            design[:, ev.index] = ev.image.data[x, y, z, :]
+            design[:, ev.index] = ev.image[x, y, z, :]
 
         return design
 
@@ -407,7 +419,7 @@ def getFirstLevelEVs(featDir, settings, designMat):
                     from its ``design.fsf`` file (see
                     :func:`.featanalysis.loadSettings`).
     :arg designMat: The FEAT design matrix (a numpy array - see
-                    :func:`.featanalysis.loadDesign`).
+                    :func:`loadDesignMat`).
 
     :returns: A list of :class:`EV` instances, one for each column in the
               design matrix.
@@ -570,7 +582,7 @@ def getHigherLevelEVs(featDir, settings, designMat):
                     from its ``design.fsf`` file (see
                     :func:`.featanalysis.loadSettings`).
     :arg designMat: The FEAT design matrix (a numpy array - see
-                    :func:`.featanalysis.loadDesign`).
+                    :func:`loadDesignMat`).
 
     :returns: A list of :class:`EV` instances, one for each column in the
               design matrix. 
@@ -619,17 +631,16 @@ def getHigherLevelEVs(featDir, settings, designMat):
     return evs
 
 
-def loadDesignMat(featdir):
-    """Loads the design matrix from a FEAT directory.
+def loadDesignMat(designmat):
+    """Loads the specified design matrix.
 
     Returns a ``numpy`` array containing the design matrix data, where the
     first dimension corresponds to the data points, and the second to the EVs.
 
-    :arg featdir: A FEAT directory.
+    :arg designmat: Path to the ``design.mat`` file.
     """
 
-    matrix    = None 
-    designmat = op.join(featdir, 'design.mat')
+    matrix = None 
 
     log.debug('Loading FEAT design matrix from {}'.format(designmat))
 
@@ -637,6 +648,12 @@ def loadDesignMat(featdir):
 
         while True:
             line = f.readline()
+
+            # readline returns an empty string at EOF
+            if line == '':
+                break
+
+            # Matrix data starts after "/Matrix"
             if line.strip() == '/Matrix':
                 break
 
