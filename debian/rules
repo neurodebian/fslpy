@@ -12,9 +12,11 @@ gitver = $(shell [ -x /usr/bin/git ] && git describe --tags --match 'v[0-9].*' $
 
 export DH_VERBOSE = 1
 export PYBUILD_NAME = fsl
+# disable tests for now, needs X, needs non-free data
 # tests are not PY3 compatible
-export PYBUILD_DISABLE = test/python3
-export PYBUILD_TEST_ARGS = --niter 1 --ignore tests/test_image.py
+export PYBUILD_DISABLE = test/python3 test/python2
+# atlas tests need non-free data
+export PYBUILD_TEST_ARGS = --niter 1 --ignore tests/test_image.py --ignore tests/test_atlases
 
 # one ring to rule them all ...
 %:
