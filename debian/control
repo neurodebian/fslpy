@@ -1,7 +1,7 @@
 Source: fslpy
 Maintainer: NeuroDebian Team <team@neuro.debian.net>
 Uploaders: Michael Hanke <mih@debian.org>
-Section: non-free/python
+Section: python
 Priority: optional
 Build-Depends: debhelper (>= 9),
                dh-python,
@@ -24,7 +24,7 @@ X-Python-Version: >= 2.7
 
 Package: python-fsl
 Architecture: all
-Section: non-free/python
+Section: python
 Depends: python-lxml,
          python-nibabel,
          ${misc:Depends},
@@ -39,7 +39,7 @@ Description: FSL Python library
 
 Package: python3-fsl
 Architecture: all
-Section: non-free/python
+Section: python
 Depends: python3-lxml,
          python3-nibabel,
          ${misc:Depends},
