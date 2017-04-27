@@ -1,0 +1,9 @@
+diff --git a/pytest.ini b/pytest.ini
+index 599c0c24..99c6cbd9 100644
+--- a/pytest.ini
++++ b/pytest.ini
+@@ -1,3 +1,3 @@
+ [pytest]
+ testpaths = tests
+-addopts   = -v --niters=50 --cov=fsl --cov-report=html
++#addopts   = -v --niters=50 --cov=fsl --cov-report=html
