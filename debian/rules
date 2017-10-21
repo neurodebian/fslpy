@@ -27,11 +27,16 @@ clean::
 	# Ahhhhhhh!
 	rm -rf .pybuild build
 	-rm -rf fslpy.egg-info/
+	-rm -rf assets
+	-rm -rf .eggs/
+	-rm -rf tests/__pycache__
+	-find . -name '*.pyc' -delete
 
 override_dh_install:
 	dh_install
-	# otherwise we get the binaries in both packages
-	rm -r debian/python3-fsl/usr/bin
+
+override_dh_auto_test:
+	# all tests disabled, need external software, data and X
 
 # make orig tarball from repository content
 get-orig-source:

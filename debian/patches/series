@@ -1,1 +1,3 @@
 no_pytest
+custom_pytest_options
+sane_deps

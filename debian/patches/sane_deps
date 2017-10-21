@@ -1,0 +1,10 @@
+diff --git a/requirements.txt b/requirements.txt
+index 986d25b4..21e889bd 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,4 +1,4 @@
+-six==1.*
++#six==1.*
+ deprecation==1.*
+ numpy==1.*
+ nibabel==2.*

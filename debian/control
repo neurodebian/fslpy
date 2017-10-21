@@ -13,8 +13,14 @@ Build-Depends: debhelper (>= 9),
                python3-indexed-gzip,
                python-nibabel,
                python3-nibabel,
-               python-six,
-               python3-six,
+               python-six (>= 1.0~),
+               python3-six (>= 1.0~),
+               python-mock,
+               python3-mock,
+               python-sphinx,
+               python3,
+               python-sphinx-rtd-theme,
+               python3-sphinx-rtd-theme,
 Standards-Version: 3.9.8
 X-Python-Version: >= 2.7
 
@@ -23,6 +29,7 @@ Architecture: all
 Section: python
 Depends: python-lxml,
          python-nibabel,
+         python-six (>= 1.0~),
          ${misc:Depends},
          ${python:Depends},
 Recommends: python-wxgtk3.0
@@ -38,6 +45,7 @@ Architecture: all
 Section: python
 Depends: python3-lxml,
          python3-nibabel,
+         python3-six (>= 1.0~),
          ${misc:Depends},
          ${python3:Depends},
 Provides: ${python3:Provides}

@@ -1,19 +1,27 @@
 --- a/setup.cfg
 +++ b/setup.cfg
-@@ -1,2 +1,2 @@
+@@ -1,5 +1,5 @@
  [aliases]
 -test=pytest
 +#test=pytest
+ 
+ [bdist_wheel]
+ universal=1
+\ No newline at end of file
 --- a/setup.py
 +++ b/setup.py
-@@ -101,8 +101,8 @@
+@@ -105,14 +105,6 @@
  
+     packages=packages,
      install_requires=install_requires,
- 
--    setup_requires=['pytest-runner'],
--    tests_require=['pytest', 'pytest-cov', 'pytest-runner'],
-+    #setup_requires=['pytest-runner'],
-+    #tests_require=['pytest', 'pytest-cov', 'pytest-runner'],
+-    setup_requires=['pytest-runner', 'sphinx', 'sphinx-rtd-theme', 'mock'],
+-
+-    tests_require=['mock',
+-                   'coverage',
+-                   'pytest-cov',
+-                   'pytest-html',
+-                   'pytest-runner',
+-                   'pytest'],
      test_suite='tests',
  
      cmdclass={'doc' : doc},
