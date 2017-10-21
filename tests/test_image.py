@@ -12,7 +12,6 @@ import os.path   as op
 import itertools as it
 import              tempfile
 import              shutil
-import              glob
 
 import pytest
 
@@ -22,12 +21,14 @@ import nibabel      as nib
 
 from nibabel.spatialimages import ImageFileError
 
-import fsl.data.constants as constants
-import fsl.data.image     as fslimage
-import fsl.utils.path     as fslpath
+import fsl.data.constants    as constants
+import fsl.data.image        as fslimage
+import fsl.data.imagewrapper as imagewrapper
+import fsl.utils.path        as fslpath
 
 from . import make_random_image
 from . import make_dummy_file
+from . import testdir
 
 
 def make_image(filename=None,
@@ -54,9 +55,9 @@ def make_image(filename=None,
     hdr.set_zooms([abs(p) for p in pixdims])
 
     xform = np.eye(4)
-    for i, p in enumerate(pixdims):
+    for i, p in enumerate(pixdims[:3]):
         xform[i, i] = p
-    
+
     data  = np.array(np.random.random(dims) * 100, dtype=dtype)
 
     if   imgtype == 0: img = nib.AnalyzeImage(data, xform, hdr)
@@ -68,7 +69,7 @@ def make_image(filename=None,
         if op.splitext(filename)[1] == '':
             if imgtype == 0: filename = '{}.img'.format(filename)
             else:            filename = '{}.nii'.format(filename)
- 
+
         nib.save(img, filename)
 
     return img
@@ -95,7 +96,7 @@ def test_load():
                 'ambiguous.img',
                 'ambiguous.img.gz',
                 'notnifti.nii.gz']
-    
+
 
     shouldPass = ['compressed',
                   'compressed.nii.gz',
@@ -121,12 +122,12 @@ def test_load():
     testdir = tempfile.mkdtemp()
 
     for f in toCreate:
-        
+
         if f.startswith('notnifti'):
             make_dummy_file(op.join(testdir, f))
         else:
             make_random_image(op.join(testdir, f))
-            
+
     # Not raising an error means the test passes
     try:
         for fname in shouldPass:
@@ -164,7 +165,7 @@ def test_create():
     assert img.niftiVersion == 1
 
     for imgType in [0, 1, 2]:
-        
+
         nimg = make_image(imgtype=imgType, pixdims=(5, 6, 7))
         nhdr = nimg.header
 
@@ -189,13 +190,13 @@ def test_create():
             img = fslimage.Image(nimg)
             assert img.niftiVersion == imgtype
             assert np.all(np.isclose(img.pixdim, (2, 3, 4)))
-            
+
         finally:
             shutil.rmtree(testdir)
 
 
 def test_bad_create():
-    
+
     class BadThing(object):
         pass
 
@@ -204,7 +205,7 @@ def test_bad_create():
         fslimage.Image(
             np.random.random((10, 10, 10)),
             header=BadThing())
-        
+
     # Bad data
     with pytest.raises(Exception):
         fslimage.Image(BadThing())
@@ -221,33 +222,38 @@ def test_bad_create():
     with pytest.raises(Exception):
         fslimage.Image(np.random.random(10, 10, 10),
                        xform=np.eye(3))
-        
+
     with pytest.raises(Exception):
         fslimage.Image(np.random.random(10, 10, 10),
                        xform=np.eye(5))
 
 
-def  test_Image_atts_analyze(): _test_Image_atts(0) 
+def  test_Image_atts_analyze(): _test_Image_atts(0)
 def  test_Image_atts_nifti1():  _test_Image_atts(1)
 def  test_Image_atts_nifti2():  _test_Image_atts(2)
 def _test_Image_atts(imgtype):
     """Test that basic Nifti/Image attributes are correct. """
-    
+
     testdir     = tempfile.mkdtemp()
     allowedExts = fslimage.ALLOWED_EXTENSIONS
     fileGroups  = fslimage.FILE_GROUPS
 
     # (file, dims, pixdims, dtype)
     dtypes = [np.uint8, np.int16, np.int32, np.float32, np.double]
-    dims   = [(10,  1,  1),
+    dims   = [(1,   1,  1),
+              (10,  1,  1),
               (1,  10,  1),
               (1,  1,  10),
               (10,  10, 1),
               (10,  1, 10),
               (1,  10, 10),
               (10, 10, 10),
-              (1,   1,  1, 5),
-              (10,  10, 1, 5),
+              (1,   1,  1, 1),
+              (10,  1,  1, 1),
+              (1,  10,  1, 1),
+              (1,   1, 10, 1),
+              (10, 10,  1, 1),
+              (10, 10, 1, 5),
               (10,  1, 10, 5),
               (1,  10, 10, 5),
               (10, 10, 10, 5)]
@@ -259,34 +265,38 @@ def _test_Image_atts(imgtype):
     tests = it.product(dims, pixdims, dtypes)
     tests = list(tests)
     paths = ['test{:03d}'.format(i) for i in range(len(tests))]
-                       
+
     for path, atts in zip(paths, tests):
 
         dims, pixdims, dtype = atts
 
         ndims   = len(dims)
-        pixdims = pixdims[:ndims] 
+        pixdims = pixdims[:ndims]
 
         path = op.abspath(op.join(testdir, path))
         make_image(path, imgtype, dims, pixdims, dtype)
- 
+
     try:
 
         for path, atts in zip(paths, tests):
 
             dims, pixdims, dtype = atts
 
-            ndims   = len(dims)
-            pixdims = pixdims[:ndims]
+            expdims    = imagewrapper.canonicalShape(dims)
+            expndims   = len(expdims)
+            ndims      = len(dims)
+            pixdims    = pixdims[:ndims]
+            exppixdims = pixdims[:expndims]
 
             path = op.abspath(op.join(testdir, path))
             i    = fslimage.Image(path)
 
-            assert tuple(i.shape)                       == tuple(dims)
-            assert tuple(i.pixdim)                      == tuple(pixdims)
+            assert tuple(i.shape)                       == tuple(expdims)
+            assert tuple(i.pixdim)                      == tuple(exppixdims)
             assert tuple(i.nibImage.shape)              == tuple(dims)
             assert tuple(i.nibImage.header.get_zooms()) == tuple(pixdims)
 
+            assert i.ndims      == expndims
             assert i.dtype      == dtype
             assert i.name       == op.basename(path)
             assert i.dataSource == fslpath.addExt(path,
@@ -295,12 +305,12 @@ def _test_Image_atts(imgtype):
                                                   fileGroups=fileGroups)
     finally:
         shutil.rmtree(testdir)
-        
-def  test_Image_atts2_analyze(): _test_Image_atts2(0) 
+
+def  test_Image_atts2_analyze(): _test_Image_atts2(0)
 def  test_Image_atts2_nifti1():  _test_Image_atts2(1)
 def  test_Image_atts2_nifti2():  _test_Image_atts2(2)
 def _test_Image_atts2(imgtype):
-    
+
     # See fsl.utils.constants for the meanings of these codes
     xyzUnits  = [0, 1, 2, 3]
     timeUnits = [8, 16, 24, 32, 40, 48]
@@ -392,7 +402,7 @@ def test_addExt():
 
     for path in toCreate:
         path = op.abspath(op.join(testdir, path))
-        make_random_image(path) 
+        make_random_image(path)
 
     try:
         for path, mustExist, expected in tests:
@@ -456,14 +466,14 @@ def test_defaultExt():
         os.environ['FSLOUTPUTTYPE'] = o
 
         assert fslimage.defaultExt() == e
-        
+
 
 def  test_Image_orientation_analyze_neuro(): _test_Image_orientation(0, 'neuro')
 def  test_Image_orientation_analyze_radio(): _test_Image_orientation(0, 'radio')
 def  test_Image_orientation_nifti1_neuro():  _test_Image_orientation(1, 'neuro')
 def  test_Image_orientation_nifti1_radio():  _test_Image_orientation(1, 'radio')
 def  test_Image_orientation_nifti2_neuro():  _test_Image_orientation(2, 'neuro')
-def  test_Image_orientation_nifti2_radio():  _test_Image_orientation(2, 'radio') 
+def  test_Image_orientation_nifti2_radio():  _test_Image_orientation(2, 'radio')
 def _test_Image_orientation(imgtype, voxorient):
     """Test the Nifti.isNeurological and Nifti.getOrientation methods. """
 
@@ -493,7 +503,7 @@ def _test_Image_orientation(imgtype, voxorient):
         expectvox0Orientation = constants.ORIENT_R2L
         expectvox1Orientation = constants.ORIENT_P2A
         expectvox2Orientation = constants.ORIENT_I2S
-        
+
     elif voxorient == 'neuro':
         expectNeuroTest       = True
         expectvox0Orientation = constants.ORIENT_L2R
@@ -534,7 +544,7 @@ def  test_Image_sqforms_nifti1_nosqform(): _test_Image_sqforms(1, 1, 0)
 def  test_Image_sqforms_nifti2_normal():   _test_Image_sqforms(2, 1, 1)
 def  test_Image_sqforms_nifti2_nosform():  _test_Image_sqforms(2, 0, 1)
 def  test_Image_sqforms_nifti2_noqform():  _test_Image_sqforms(2, 1, 0)
-def  test_Image_sqforms_nifti2_nosqform(): _test_Image_sqforms(2, 0, 0) 
+def  test_Image_sqforms_nifti2_nosqform(): _test_Image_sqforms(2, 0, 0)
 def _test_Image_sqforms(imgtype, sformcode, qformcode):
     """Test the Nifti.getXFormCode method, and the voxToWorldMat/worldToVoxMat
     attributes for NIFTI images with the given sform/qform code combination.
@@ -587,7 +597,7 @@ def _test_Image_sqforms(imgtype, sformcode, qformcode):
 
     with pytest.raises(ValueError):
         image.getXFormCode('badcode')
-    
+
     try:
         assert np.all(np.isclose(image.voxToWorldMat,  expAffine))
         assert np.all(np.isclose(image.worldToVoxMat,  invExpAffine))
@@ -601,10 +611,10 @@ def _test_Image_sqforms(imgtype, sformcode, qformcode):
         shutil.rmtree(testdir)
 
 
-def  test_Image_changeXform_analyze():         _test_Image_changeXform(0) 
+def  test_Image_changeXform_analyze():         _test_Image_changeXform(0)
 def  test_Image_changeXform_nifti1():          _test_Image_changeXform(1)
 def  test_Image_changeXform_nifti1_nosqform(): _test_Image_changeXform(1, 0, 0)
-def  test_Image_changeXform_nifti2():          _test_Image_changeXform(2) 
+def  test_Image_changeXform_nifti2():          _test_Image_changeXform(2)
 def _test_Image_changeXform(imgtype, sformcode=None, qformcode=None):
     """Test changing the Nifti.voxToWorldMat attribute. """
 
@@ -641,7 +651,7 @@ def _test_Image_changeXform(imgtype, sformcode=None, qformcode=None):
     if imgtype > 0:
         expSformCode = image.get_sform(coded=True)[1]
         expQformCode = image.get_qform(coded=True)[1]
-        
+
         if sformcode == 0:
             expSformCode = constants.NIFTI_XFORM_ALIGNED_ANAT
     else:
@@ -654,7 +664,7 @@ def _test_Image_changeXform(imgtype, sformcode=None, qformcode=None):
         assert img.saveState
 
         if imgtype == 0:
-            # ANALYZE affine is not editable 
+            # ANALYZE affine is not editable
             with pytest.raises(Exception):
                 img.voxToWorldMat = newXform
             return
@@ -679,7 +689,7 @@ def _test_Image_changeXform(imgtype, sformcode=None, qformcode=None):
 
 def  test_Image_changeData_analyze(seed): _test_Image_changeData(0)
 def  test_Image_changeData_nifti1(seed):  _test_Image_changeData(1)
-def  test_Image_changeData_nifti2(seed):  _test_Image_changeData(2) 
+def  test_Image_changeData_nifti2(seed):  _test_Image_changeData(2)
 def _test_Image_changeData(imgtype):
     """Test that changing image data triggers notification, and also causes
     the dataRange attribute to be updated.
@@ -687,13 +697,13 @@ def _test_Image_changeData(imgtype):
 
     testdir   = tempfile.mkdtemp()
     imagefile = op.join(testdir, 'image')
-    
+
     make_image(imagefile, imgtype)
 
     img = fslimage.Image(imagefile)
 
     notified = {}
-    
+
     def randvox():
         return (np.random.randint(0, img.shape[0]),
                 np.random.randint(0, img.shape[1]),
@@ -723,9 +733,9 @@ def _test_Image_changeData(imgtype):
         assert img.saveState
         assert np.all(np.isclose(img.dataRange, (dmin, dmax)))
 
-        randval    = dmin + np.random.random() * drange
-        rx, ry, rz = randvox()
-
+        # random value within the existing data range
+        randval         = dmin + np.random.random() * drange
+        rx, ry, rz      = randvox()
         img[rx, ry, rz] = randval
 
         assert np.isclose(img[rx, ry, rz], randval)
@@ -738,23 +748,29 @@ def _test_Image_changeData(imgtype):
         newdmin = dmin - 100
         newdmax = dmax + 100
 
-        rx, ry, rz = randvox()
-        img[rx, ry, rz] = newdmin
+        # random value below the data range
+        minx, miny, minz = randvox()
+        img[minx, miny, minz] = newdmin
 
         assert notified.get('data',      False)
         assert notified.get('dataRange', False)
-        assert np.isclose(img[rx, ry, rz], newdmin)
+        assert np.isclose(img[minx, miny, minz], newdmin)
         assert np.all(np.isclose(img.dataRange, (newdmin, dmax)))
 
         notified.pop('data')
         notified.pop('dataRange')
 
-        rx, ry, rz = randvox()
-        img[rx, ry, rz] = newdmax
+        # random value above the data range
+        maxx, maxy, maxz = randvox()
+
+        while (maxx, maxy, maxz) == (minx, miny, minz):
+            maxx, maxy, maxz = randvox()
+
+        img[maxx, maxy, maxz] = newdmax
 
         assert notified.get('data',      False)
         assert notified.get('dataRange', False)
-        assert np.isclose(img[rx, ry, rz], newdmax)
+        assert np.isclose(img[maxx, maxy, maxz], newdmax)
         assert np.all(np.isclose(img.dataRange, (newdmin, newdmax)))
 
     finally:
@@ -773,7 +789,7 @@ def _test_Image_2D(imgtype):
     # which happens when you create
     # an XY slice with fslroi. This
     # should still be read in as a
-    # 3D image. 
+    # 3D image.
     testdims = [(10, 20),
                 (10, 20, 1),
                 (10, 1,  20),
@@ -787,9 +803,9 @@ def _test_Image_2D(imgtype):
         for shape in testdims:
 
             pixdim = [2] * len(shape)
-                
+
             imagefile = op.join(testdir, 'image')
-            
+
             make_image(imagefile, imgtype, shape, pixdim)
 
             image = fslimage.Image(imagefile)
@@ -811,9 +827,40 @@ def _test_Image_2D(imgtype):
         shutil.rmtree(testdir)
 
 
-def test_Image_voxelsToScaledVoxels():
+def  test_Image_5D_analyze(): _test_Image_5D(0)
+def  test_Image_5D_nifti1():  _test_Image_5D(1)
+def  test_Image_5D_nifti2():  _test_Image_5D(2)
+def _test_Image_5D(imgtype):
 
-    imgTypes = [0, 1, 2]
+    testdims = [
+        ( 1,  1,  1, 1, 5),
+        (10, 10,  1, 1, 5),
+        (10, 10, 10, 1, 5),
+        ( 1,  1,  1, 4, 5),
+        (10, 10,  1, 4, 5),
+        (10, 10, 10, 4, 5),
+    ]
+
+    for dims in testdims:
+
+        with testdir() as td:
+
+            path = op.join(td, 'test.nii')
+
+            make_image(path, imgtype, dims, [1] * len(dims))
+
+            img = fslimage.Image(path)
+
+            assert img.shape == dims
+            assert img.ndims == 5
+
+
+def test_Image_voxToScaledVox_analyze(): _test_Image_voxToScaledVox(0)
+def test_Image_voxToScaledVox_nifti1():  _test_Image_voxToScaledVox(1)
+def test_Image_voxToScaledVox_nifti2():  _test_Image_voxToScaledVox(2)
+
+def _test_Image_voxToScaledVox(imgtype):
+
     dims     = [(10, 10, 10)]
     pixdims  = [(-1, 1, 1),
                 ( 1, 1, 1),
@@ -831,18 +878,19 @@ def test_Image_voxelsToScaledVoxels():
         if itype > 0 and pixdims[0] > 0:
             xf[0, 0] = -pixdims[0]
             xf[0, 3] =  pixdims[0] * (dims[0] - 1)
-            
+
         return xf
-    
-    for imgType, dim, pixdim in it.product(imgTypes, dims, pixdims):
-        nimg = make_image(imgtype=imgType, dims=dim, pixdims=pixdim)
+
+    for dim, pixdim in it.product(dims, pixdims):
+        nimg = make_image(imgtype=imgtype, dims=dim, pixdims=pixdim)
         img  = fslimage.Image(nimg)
 
-        expected = expect(imgType, dim, pixdim)
-        result   = img.voxelsToScaledVoxels()
+        expected    = expect(imgtype, dim, pixdim)
+        invexpected = npla.inv(expected)
 
-        assert np.all(np.isclose(result, expected))
-        
+        assert np.all(np.isclose(expected,    img.voxToScaledVoxMat))
+        assert np.all(np.isclose(invexpected, img.scaledVoxToVoxMat))
+
 
 def test_Image_sameSpace():
 
@@ -853,7 +901,7 @@ def test_Image_sameSpace():
     pixdims = [(2, 2, 2, 1),
                (2, 3, 4, 1)]
 
-    for (imgType, 
+    for (imgType,
          dim1,
          dim2,
          pixdim1,
@@ -885,8 +933,8 @@ def _test_Image_save(imgtype):
             if rvox not in rvoxes:
                 rvoxes.append(rvox)
         return rvoxes
-        
-    
+
+
     testdir   = tempfile.mkdtemp()
     if imgtype == 0:
         filename  = op.join(testdir, 'blob.img')
@@ -904,11 +952,13 @@ def _test_Image_save(imgtype):
     try:
         make_image(filename, imgtype)
 
-        img = fslimage.Image(filename)
+        # Using mmap can cause a "Bus error"
+        # under docker. No idea why.
+        img = fslimage.Image(filename, mmap=False)
 
         randvoxes = randvoxes(5)
         randvals  = [np.random.random() for i in range(5)]
-        
+
         for (x, y, z), v in zip(randvoxes, randvals):
             img[x, y, z] = v
 
@@ -937,7 +987,7 @@ def _test_Image_save(imgtype):
 
             # Load the image back in
             img2 = fslimage.Image(img.dataSource)
-            
+
             assert img.saveState
             assert img.dataSource == expDataSource
 
@@ -945,8 +995,8 @@ def _test_Image_save(imgtype):
                 assert np.all(np.isclose(img.voxToWorldMat, xform))
 
             for (x, y, z), v in zip(randvoxes, randvals):
-                assert np.isclose(img[x, y, z], v) 
-            
+                assert np.isclose(img[x, y, z], v)
+
 
     finally:
         shutil.rmtree(testdir)

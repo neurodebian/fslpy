@@ -5,7 +5,7 @@
 # Author: Paul McCarthy <pauldmccarthy@gmail.com>
 #
 """The :mod:`fsl` package is a library which contains convenience classes
-and functions for use by FSL python tools. It is broadly split into the 
+and functions for use by FSL python tools. It is broadly split into the
 following sub-packages:
 
 .. autosummary::
@@ -13,16 +13,12 @@ following sub-packages:
    fsl.data
    fsl.utils
    fsl.scripts
+   fsl.version
 
-.. note:: The ``fslpy`` version number (currently |version|) is set in a
-          single place - the :mod:`fsl.version` module.
+.. note:: The ``fsl`` namespace is a ``pkgutil``-style *namespace package* -
+          it can be used across different projects - see
+          https://packaging.python.org/guides/packaging-namespace-packages/
+          for details.
 """
 
-
-import fsl.version
-
-
-__version__ = fsl.version.__version__
-"""The current ``fslpy`` version number. This information is stored in the
-:mod:`fsl.version` module.
-"""
+__path__ = __import__('pkgutil').extend_path(__path__, __name__)

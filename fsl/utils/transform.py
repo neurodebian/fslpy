@@ -11,16 +11,26 @@ spaces. The following functions are provided:
    :nosignatures:
 
    transform
+   transformNormal
    scaleOffsetXform
    invert
    concat
    compose
    decompose
+   rotMatToAffine
    rotMatToAxisAngles
    axisAnglesToRotMat
    axisBounds
    flirtMatrixToSform
    sformToFlirtMatrix
+
+And a few more functions are provided for working with vectors:
+
+.. autosummary::
+   :nosignatures:
+
+   veclength
+   normalise
 """
 
 import numpy        as np
@@ -44,11 +54,34 @@ def concat(*xforms):
     return result
 
 
+def veclength(vec):
+    """Returns the length of the given vector(s).
+
+    Multiple vectors may be passed in, with a shape of ``(n, 3)``.
+    """
+    vec = np.array(vec, copy=False).reshape(-1, 3)
+    return np.sqrt(np.einsum('ij,ij->i', vec, vec))
+
+
+def normalise(vec):
+    """Normalises the given vector(s) to unit length.
+
+    Multiple vectors may be passed in, with a shape of ``(n, 3)``.
+    """
+    vec = np.array(vec, copy=False).reshape(-1, 3)
+    n   = (vec.T / veclength(vec)).T
+
+    if n.size == 3:
+        n = n[0]
+
+    return n
+
+
 def scaleOffsetXform(scales, offsets):
     """Creates and returns an affine transformation matrix which encodes
     the specified scale(s) and offset(s).
 
-    
+
     :arg scales:  A tuple of up to three values specifying the scale factors
                   for each dimension. If less than length 3, is padded with
                   ``1.0``.
@@ -60,8 +93,12 @@ def scaleOffsetXform(scales, offsets):
     :returns:     A ``numpy.float32`` array of size :math:`4 \\times 4`.
     """
 
-    if not isinstance(scales,  collections.Sequence): scales  = [scales]
-    if not isinstance(offsets, collections.Sequence): offsets = [offsets]
+    oktypes = (collections.Sequence, np.ndarray)
+
+    if not isinstance(scales,  oktypes): scales  = [scales]
+    if not isinstance(offsets, oktypes): offsets = [offsets]
+    if not isinstance(scales,  list):    scales  = list(scales)
+    if not isinstance(offsets, list):    offsets = list(offsets)
 
     lens = len(scales)
     leno = len(offsets)
@@ -87,41 +124,49 @@ def compose(scales, offsets, rotations, origin=None):
     and axis rotations.
 
     :arg scales:    Sequence of three scale values.
-    
+
     :arg offsets:   Sequence of three offset values.
-    
-    :arg rotations: Sequence of three rotation values, in radians.
-    
+
+    :arg rotations: Sequence of three rotation values, in radians, or
+                    a rotation matrix of shape ``(3, 3)``.
+
     :arg origin:    Origin of rotation - must be scaled by the ``scales``.
                     If not provided, the rotation origin is ``(0, 0, 0)``.
     """
 
     preRotate  = np.eye(4)
     postRotate = np.eye(4)
+
+    rotations = np.array(rotations)
+
+    if rotations.shape == (3,):
+        rotations = axisAnglesToRotMat(*rotations)
+
     if origin is not None:
         preRotate[ 0, 3] = -origin[0]
         preRotate[ 1, 3] = -origin[1]
         preRotate[ 2, 3] = -origin[2]
         postRotate[0, 3] =  origin[0]
         postRotate[1, 3] =  origin[1]
-        postRotate[2, 3] =  origin[2] 
+        postRotate[2, 3] =  origin[2]
 
     scale  = np.eye(4, dtype=np.float64)
     offset = np.eye(4, dtype=np.float64)
     rotate = np.eye(4, dtype=np.float64)
-    
+
     scale[  0,  0] = scales[ 0]
     scale[  1,  1] = scales[ 1]
     scale[  2,  2] = scales[ 2]
     offset[ 0,  3] = offsets[0]
     offset[ 1,  3] = offsets[1]
     offset[ 2,  3] = offsets[2]
-    rotate[:3, :3] = axisAnglesToRotMat(*rotations)
+
+    rotate[:3, :3] = rotations
 
     return concat(offset, postRotate, rotate, preRotate, scale)
 
 
-def decompose(xform):
+def decompose(xform, angles=True):
     """Decomposes the given transformation matrix into separate offsets,
     scales, and rotations, according to the algorithm described in:
 
@@ -132,17 +177,22 @@ def decompose(xform):
     It is assumed that the given transform has no perspective components. Any
     shears in the affine are discarded.
 
-    :arg xform: A ``(4, 4)`` affine transformation matrix.
+    :arg xform:  A ``(4, 4)`` affine transformation matrix.
+
+    :arg angles: If ``True`` (the default), the rotations are returned
+                 as axis-angles, in radians. Otherwise, the rotation matrix
+                 is returned.
 
     :returns: The following:
                 - A sequence of three scales
                 - A sequence of three translations
-                - A sequence of three rotations, in radians
+                - A sequence of three rotations, in radians. Or, if
+                  ``angles is False``, a rotation matrix.
     """
- 
+
     # The inline comments in the code below are taken verbatim from
     # the referenced article, [except for notes in square brackets].
-    
+
     # The next step is to extract the translations. This is trivial;
     # we find t_x = M_{4,1}, t_y = M_{4,2}, and t_z = M_{4,3}. At this
     # point we are left with a 3*3 matrix M' = M_{1..3,1..3}.
@@ -155,7 +205,7 @@ def decompose(xform):
     M3 = xform[2]
 
     # The process of finding the scaling factors and shear parameters
-    # is interleaved. First, find s_x = |M'_1|. 
+    # is interleaved. First, find s_x = |M'_1|.
     sx = np.sqrt(np.dot(M1, M1))
 
     # Then, compute an initial value for the xy shear factor,
@@ -191,7 +241,7 @@ def decompose(xform):
     sxz = sxz / sz
     syz = sxz / sz
 
-    # The resulting matrix now is a pure rotation matrix, except that it 
+    # The resulting matrix now is a pure rotation matrix, except that it
     # might still include a scale factor of -1. If the determinant of the
     # matrix is -1, negate the matrix and all three scaling factors. Call
     # the resulting matrix R.
@@ -206,9 +256,17 @@ def decompose(xform):
     # Finally, we need to decompose the rotation matrix into a sequence
     # of rotations about the x, y, and z axes. [This is done in the
     # rotMatToAxisAngles function]
-    rx, ry, rz = rotMatToAxisAngles(R.T)
+    if angles: rotations = rotMatToAxisAngles(R.T)
+    else:      rotations = R.T
 
-    return [sx, sy, sz], translations, [rx, ry, rz]
+    return [sx, sy, sz], translations, rotations
+
+
+def rotMatToAffine(rotmat, origin=None):
+    """Convenience function which encodes the given ``(3, 3)`` rotation
+    matrix into a ``(4, 4)`` affine.
+    """
+    return compose([1, 1, 1], [0, 0, 0], rotmat, origin)
 
 
 def rotMatToAxisAngles(rotmat):
@@ -225,7 +283,7 @@ def rotMatToAxisAngles(rotmat):
     else:
         xrot = np.arctan2( rotmat[2, 1], rotmat[2, 2])
         yrot = np.arctan2(-rotmat[2, 0], yrot)
-        zrot = np.arctan2( rotmat[1, 0], rotmat[0, 0]) 
+        zrot = np.arctan2( rotmat[1, 0], rotmat[0, 0])
 
     return [xrot, yrot, zrot]
 
@@ -233,12 +291,12 @@ def rotMatToAxisAngles(rotmat):
 def axisAnglesToRotMat(xrot, yrot, zrot):
     """Constructs a ``(3, 3)`` rotation matrix from the given angles, which
     must be specified in radians.
-    """ 
+    """
 
     xmat = np.eye(3)
     ymat = np.eye(3)
     zmat = np.eye(3)
-    
+
     xmat[1, 1] =  np.cos(xrot)
     xmat[1, 2] = -np.sin(xrot)
     xmat[2, 1] =  np.sin(xrot)
@@ -265,13 +323,13 @@ def axisBounds(shape,
                offset=1e-4):
     """Returns the ``(lo, hi)`` bounds of the specified axis/axes in the
     world coordinate system defined by ``xform``.
-    
+
     If the ``origin`` parameter is set to  ``centre`` (the default),
     this function assumes that voxel indices correspond to the voxel
     centre. For example, the voxel at ``(4, 5, 6)`` covers the space:
-    
+
       ``[3.5 - 4.5, 4.5 - 5.5, 5.5 - 6.5]``
-    
+
     So the bounds of the specified shape extends from the corner at
 
       ``(-0.5, -0.5, -0.5)``
@@ -283,9 +341,9 @@ def axisBounds(shape,
     If the ``origin`` parameter is set to ``corner``, this function
     assumes that voxel indices correspond to the voxel corner. In this
     case, a voxel  at ``(4, 5, 6)`` covers the space:
-    
+
       ``[4 - 5, 5 - 6, 6 - 7]``
-    
+
     So the bounds of the specified shape extends from the corner at
 
       ``(0, 0, 0)``
@@ -302,7 +360,7 @@ def axisBounds(shape,
     amount.  The ``boundary`` parameter can also be set to ``'both'``, or
     ``None``. This option is provided so that you can ensure that the
     resulting bounds will always be contained within the image space.
-    
+
     :arg shape:    The ``(x, y, z)`` shape of the data.
 
     :arg xform:    Transformation matrix which transforms voxel coordinates
@@ -313,7 +371,7 @@ def axisBounds(shape,
     :arg origin:   Either ``'centre'`` (the default) or ``'corner'``.
 
     :arg boundary: Either ``'high'`` (the default), ``'low'``, ''`both'``,
-                   or ``None``. 
+                   or ``None``.
 
     :arg offset:   Amount by which the boundary voxel coordinates should be
                    offset. Defaults to ``1e-4``.
@@ -331,17 +389,17 @@ def axisBounds(shape,
     if origin not in ('centre', 'corner'):
         raise ValueError('Invalid origin value: {}'.format(origin))
     if boundary not in ('low', 'high', 'both', None):
-        raise ValueError('Invalid boundary value: {}'.format(boundary)) 
+        raise ValueError('Invalid boundary value: {}'.format(boundary))
 
     scalar = False
 
     if axes is None:
         axes = [0, 1, 2]
-        
+
     elif not isinstance(axes, collections.Iterable):
         scalar = True
         axes   = [axes]
-    
+
     x, y, z = shape[:3]
 
     points = np.zeros((8, 3), dtype=np.float32)
@@ -362,7 +420,7 @@ def axisBounds(shape,
         x0 += offset
         y0 += offset
         z0 += offset
-        
+
     if boundary in ('high', 'both'):
         x  -= offset
         y  -= offset
@@ -385,25 +443,30 @@ def axisBounds(shape,
     if scalar: return (lo[0], hi[0])
     else:      return (lo,    hi)
 
-        
-def transform(p, xform, axes=None):
+
+def transform(p, xform, axes=None, vector=False):
     """Transforms the given set of points ``p`` according to the given affine
-    transformation ``xform``. 
+    transformation ``xform``.
 
-    
-    :arg p:     A sequence or array of points of shape :math:`N \\times  3`.
 
-    :arg xform: An affine transformation matrix with which to transform the
-                points in ``p``.
+    :arg p:      A sequence or array of points of shape :math:`N \\times  3`.
 
-    :arg axes:  If you are only interested in one or two axes, and the source
-                axes are orthogonal to the target axes (see the note below),
-                you may pass in a 1D, ``N*1``, or ``N*2`` array as ``p``, and
-                use this argument to specify which axis/axes that the data in
-                ``p`` correspond to.
+    :arg xform:  A ``(4, 4)`` affine transformation matrix with which to
+                 transform the points in ``p``.
 
-    :returns:   The points in ``p``, transformed by ``xform``, as a ``numpy``
-                array with the same data type as the input.
+    :arg axes:   If you are only interested in one or two axes, and the source
+                 axes are orthogonal to the target axes (see the note below),
+                 you may pass in a 1D, ``N*1``, or ``N*2`` array as ``p``, and
+                 use this argument to specify which axis/axes that the data in
+                 ``p`` correspond to.
+
+    :arg vector: Defaults to ``False``. If ``True``, the points are treated
+                 as vectors - the translation component of the transformation
+                 is not applied. If you set this flag, you pass in a ``(3, 3)``
+                 transformation matrix.
+
+    :returns:    The points in ``p``, transformed by ``xform``, as a ``numpy``
+                 array with the same data type as the input.
 
 
     .. note:: The ``axes`` argument should only be used if the source
@@ -416,13 +479,24 @@ def transform(p, xform, axes=None):
     """
 
     p  = _fillPoints(p, axes)
-    t  = np.dot(xform[:3, :3], p.T).T + xform[:3, 3]
+    t  = np.dot(xform[:3, :3], p.T).T
+
+    if not vector:
+        t = t + xform[:3, 3]
 
     if axes is not None:
         t = t[:, axes]
 
     if t.size == 1: return t[0]
     else:           return t
+
+
+def transformNormal(p, xform, axes=None):
+    """Transforms the given point(s), under the assumption that they
+    are normal vectors. In this case, the points are transformed by
+    ``invert(xform[:3, :3]).T``.
+    """
+    return transform(p, invert(xform[:3, :3]).T, axes, vector=True)
 
 
 def _fillPoints(p, axes):
@@ -432,7 +506,7 @@ def _fillPoints(p, axes):
     """
 
     if not isinstance(p, collections.Iterable): p = [p]
-    
+
     p = np.array(p)
 
     if axes is None: return p
@@ -480,11 +554,11 @@ def flirtMatrixToSform(flirtMat, srcImage, refImage):
     :arg srcImage: Source :class:`.Image`
     :arg refImage: Reference :class:`.Image`
     """
-    
-    srcScaledVoxelMat    = srcImage.voxelsToScaledVoxels()
-    refScaledVoxelMat    = refImage.voxelsToScaledVoxels()
+
+    srcScaledVoxelMat    = srcImage.voxToScaledVoxMat
+    refInvScaledVoxelMat = refImage.voxToScaledVoxMat
+    refInvScaledVoxelMat = refImage.scaledVoxToVoxMat
     refVoxToWorldMat     = refImage.voxToWorldMat
-    refInvScaledVoxelMat = invert(refScaledVoxelMat)
 
     return concat(refVoxToWorldMat,
                   refInvScaledVoxelMat,
@@ -507,15 +581,15 @@ def sformToFlirtMatrix(srcImage, refImage, srcXform=None):
                    :attr:`.Nifti.voxToWorldMat`
     """
 
-    srcScaledVoxelsToVoxelsMat = invert(srcImage.voxelsToScaledVoxels())
-    srcVoxToWorldMat           =        srcImage.voxToWorldMat
-    refWorldToVoxMat           = invert(refImage.voxToWorldMat)
-    refVoxelsToScaledVoxelsMat =        refImage.voxelsToScaledVoxels()
+    srcScaledVoxToVoxMat = srcImage.scaledVoxToVoxMat
+    srcVoxToWorldMat     = srcImage.voxToWorldMat
+    refWorldToVoxMat     = refImage.worldToVoxMat
+    refVoxToScaledVoxMat = refImage.voxToScaledVoxMat
 
     if srcXform is not None:
         srcVoxToWorldMat = srcXform
 
-    return concat(refVoxelsToScaledVoxelsMat,
+    return concat(refVoxToScaledVoxMat,
                   refWorldToVoxMat,
                   srcVoxToWorldMat,
-                  srcScaledVoxelsToVoxelsMat)
+                  srcScaledVoxToVoxMat)

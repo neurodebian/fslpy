@@ -77,13 +77,11 @@ Other facilities
 The ``async`` module also defines the :func:`mutex` decorator, which is
 intended to be used to mark the methods of a class as being mutually exclusive.
 The ``mutex`` decorator uses the :class:`MutexFactory` class to do its work.
-
-
-.. todo:: You could possibly use ``props.callqueue`` to drive the idle loop.
 """
 
 
 import time
+import atexit
 import logging
 import functools
 import threading
@@ -94,14 +92,6 @@ except: import Queue as queue
 
 
 log = logging.getLogger(__name__)
-
-
-def _haveWX():
-    """Returns ``True`` if we are running within a ``wx`` application,
-    ``False`` otherwise.
-    """
-    import fsl.utils.platform as fslplatform
-    return fslplatform.platform.haveGui
 
 
 def run(task, onFinish=None, onError=None, name=None):
@@ -125,37 +115,39 @@ def run(task, onFinish=None, onError=None, name=None):
               the return value will be ``None``.
     """
 
+    from fsl.utils.platform import platform as fslplatform
+
     if name is None:
         name = getattr(task, '__name__', '<unknown>')
 
-    haveWX = _haveWX()
+    haveWX = fslplatform.haveGui
 
     # Calls the onFinish or onError handler
     def callback(cb, *args, **kwargs):
-        
+
         if cb is None:
             return
-        
+
         if haveWX: idle(cb, *args, **kwargs)
         else:      cb(      *args, **kwargs)
 
-    # Runs the task, and calls 
+    # Runs the task, and calls
     # callback functions as needed.
     def wrapper():
 
         try:
             task()
             log.debug('Task "{}" finished'.format(name))
-            callback(onFinish) 
-            
+            callback(onFinish)
+
         except Exception as e:
-            
+
             log.warn('Task "{}" crashed'.format(name), exc_info=True)
             callback(onError, e)
 
     # If WX, run on a thread
     if haveWX:
-        
+
         log.debug('Running task "{}" on thread'.format(name))
 
         thread = threading.Thread(target=wrapper)
@@ -219,11 +211,19 @@ def idleReset():
     global _idleTimer
     global _idleCallRate
 
+    if _idleTimer is not None:
+        _idleTimer.Stop()
+
     _idleRegistered = False
     _idleQueue      = queue.Queue()
     _idleQueueDict  = {}
     _idleTimer      = None
     _idleCallRate   = 200
+
+
+# Call idleReset on exit, in
+# case the idleTimer is active.
+atexit.register(idleReset)
 
 
 def getIdleTimeout():
@@ -238,7 +238,7 @@ def setIdleTimeout(timeout=None):
     """
 
     global _idleCallRate
-    
+
     if timeout is None:
         timeout = 200
 
@@ -292,12 +292,15 @@ def _wxIdleLoop(ev):
 
     try:
         task = _idleQueue.get_nowait()
-        
+
     except queue.Empty:
 
         # Make sure that we get called periodically,
-        # if EVT_IDLE decides to stop firing.
-        _idleTimer.Start(_idleCallRate, wx.TIMER_ONE_SHOT)
+        # if EVT_IDLE decides to stop firing. If
+        # _idleTimer is None, then idleReset has
+        # probably been called.
+        if _idleTimer is not None:
+            _idleTimer.Start(_idleCallRate, wx.TIMER_ONE_SHOT)
         return
 
     now             = time.time()
@@ -309,7 +312,7 @@ def _wxIdleLoop(ev):
     if taskName is None: taskName = funcName
     else:                taskName = '{} [{}]'.format(taskName, funcName)
 
-    # Has enouggh time elapsed
+    # Has enough time elapsed
     # since the task was scheduled?
     # If not, re-queue the task.
     # If this is the only task on the
@@ -323,7 +326,7 @@ def _wxIdleLoop(ev):
 
     # Has the task timed out?
     elif task.timeout == 0 or (elapsed < task.timeout):
-        
+
         log.debug('Running function ({}) on wx idle loop'.format(taskName))
 
         try:
@@ -336,15 +339,22 @@ def _wxIdleLoop(ev):
             try:             _idleQueueDict.pop(task.name)
             except KeyError: pass
 
+    # More tasks on the queue?
+    # Request anotherd event
     if _idleQueue.qsize() > queueSizeOffset:
         ev.RequestMore()
+
+    # Otherwise use the idle
+    # timer to make sure that
+    # the loop keeps ticking
+    # over
     else:
         _idleTimer.Start(_idleCallRate, wx.TIMER_ONE_SHOT)
 
 
 def inIdle(taskName):
     """Returns ``True`` if a task with the given name is queued on the
-    idle loop (or is currently running), ``False`` otherwise. 
+    idle loop (or is currently running), ``False`` otherwise.
     """
     global _idleQueueDict
     return taskName in _idleQueueDict
@@ -356,7 +366,7 @@ def cancelIdle(taskName):
 
     A ``KeyError`` is raised if no task called ``taskName`` exists.
     """
-    
+
     global _idleQueueDict
     _idleQueueDict[taskName].timeout = -1
 
@@ -397,14 +407,16 @@ def idle(task, *args, **kwargs):
                        argument. If ``True``, and a ``wx.MainLoop`` is not
                        running, the task is enqueued anyway, under the
                        assumption that a ``wx.MainLoop`` will be started in
-                       the future. Note that another  call to ``idle`` must
-                       be made after the ``MainLoop`` has started for the
-                       original task to be executed.
+                       the future. Note that, if ``wx.App`` has not yet been
+                       created, another  call to ``idle`` must be made after
+                       the app has been created for the original task to be
+                       executed. If ``wx`` is not available, this parameter
+                       will be ignored, and the task executed directly.
 
 
     All other arguments are passed through to the task function.
 
-    
+
     If a ``wx.App`` is not running, the ``timeout``, ``name`` and
     ``skipIfQueued`` arguments are ignored. Instead, the call will sleep for
     ``after`` seconds, and then the ``task`` is called directly.
@@ -426,6 +438,8 @@ def idle(task, *args, **kwargs):
               ``alwaysQueue``.
     """
 
+    from fsl.utils.platform import platform as fslplatform
+
     global _idleRegistered
     global _idleTimer
     global _idleQueue
@@ -439,15 +453,31 @@ def idle(task, *args, **kwargs):
     skipIfQueued = kwargs.pop('skipIfQueued', False)
     alwaysQueue  = kwargs.pop('alwaysQueue',  False)
 
-    havewx       = _haveWX()
+    canHaveGui = fslplatform.canHaveGui
+    haveGui    = fslplatform.haveGui
 
-    if havewx or alwaysQueue:
+    # If there is no possibility of a
+    # gui being available in the future,
+    # then alwaysQueue is ignored.
+    if haveGui or (alwaysQueue and canHaveGui):
+
         import wx
+        app = wx.GetApp()
 
-        if havewx and (not _idleRegistered):
-            app = wx.GetApp()
+        # Register on the idle event
+        # if an app is available
+        #
+        # n.b. The 'app is not None' test will
+        # potentially fail in scenarios where
+        # multiple wx.Apps have been instantiated,
+        # as it may return a previously created
+        # app.
+        if (not _idleRegistered) and (app is not None):
+
+            log.debug('Registering async idle loop')
+
             app.Bind(wx.EVT_IDLE, _wxIdleLoop)
-            
+
             _idleTimer      = wx.Timer(app)
             _idleRegistered = True
 
@@ -466,7 +496,7 @@ def idle(task, *args, **kwargs):
                 cancelIdle(name)
                 log.debug('Idle task ({}) is already queued - '
                           'dropping the old task'.format(name))
-                
+
             elif skipIfQueued:
                 log.debug('Idle task ({}) is already queued '
                           '- skipping it'.format(name))
@@ -487,10 +517,10 @@ def idle(task, *args, **kwargs):
 
         if name is not None:
             _idleQueueDict[name] = idleTask
-            
+
     else:
         time.sleep(after)
-        log.debug('Running idle task directly') 
+        log.debug('Running idle task directly')
         task(*args, **kwargs)
 
 
@@ -499,11 +529,11 @@ def idleWhen(func, condition, *args, **kwargs):
     :func:`idle` when it returns ``True``.
 
     :arg func:      Function to call.
-    
+
     :arg condition: Function which returns ``True`` or ``False``. The ``func``
-                    function is only called when the ``condition`` function 
+                    function is only called when the ``condition`` function
                     returns ``True``.
-    
+
     :arg pollTime:  Must be passed as a keyword argument. Time (in seconds) to
                     wait between successive calls to ``when``. Defaults to
                     ``0.2``.
@@ -538,20 +568,22 @@ def wait(threads, task, *args, **kwargs):
                        function will create a new thread to ``join`` the
                        ``threads``, and will return immediately.
 
-    
+
     All other arguments are passed to the ``task`` function.
 
-    
+
     .. note:: This function will not support ``task`` functions which expect
               a keyword argument called ``wait_direct``.
     """
+
+    from fsl.utils.platform import platform as fslplatform
 
     direct = kwargs.pop('wait_direct', False)
 
     if not isinstance(threads, collections.Sequence):
         threads = [threads]
-    
-    haveWX = _haveWX()
+
+    haveWX = fslplatform.haveGui
 
     def joinAll():
         log.debug('Wait thread joining on all targets')
@@ -566,7 +598,7 @@ def wait(threads, task, *args, **kwargs):
         thread = threading.Thread(target=joinAll)
         thread.start()
         return thread
-    
+
     else:
         joinAll()
         return None
@@ -632,7 +664,7 @@ class TaskThread(threading.Thread):
         All other arguments are passed through to the task function when it is
         executed.
 
-        .. note:: If the specified ``taskName`` is not unique (i.e. another 
+        .. note:: If the specified ``taskName`` is not unique (i.e. another
                   task with the same name may already be enqueued), the
                   :meth:`isQueued` method will probably return invalid
                   results.
@@ -760,7 +792,7 @@ class TaskThread(threading.Thread):
                 log.debug('Task completed (vetoed onFinish): {} [{}]'.format(
                     task.name,
                     getattr(task.func, '__name__', '<unknown>')))
-                
+
             except Exception as e:
                 log.warning('Task crashed: {} [{}]: {}: {}'.format(
                     task.name,
@@ -798,7 +830,7 @@ def mutex(*args, **kwargs):
             def dangerousMethod2(self):
                 return sefl.__sharedData.pop()
 
-    
+
 
     The ``@mutex`` decorator will ensure that, at any point in time, only
     one thread is running either of the ``dangerousMethod1`` or
@@ -840,7 +872,7 @@ class MutexFactory(object):
         If this ``MutexFactory`` is accessed through a class, the
         decorated function is returned.
         """
-        
+
         # Class-level access
         if instance is None:
             return self.__func
@@ -863,7 +895,7 @@ class MutexFactory(object):
                 lock.release()
 
         # Replace this MutexFactory with
-        # the decorator on the instance 
+        # the decorator on the instance
         decorator = functools.update_wrapper(decorator, self.__func)
         setattr(instance, self.__func.__name__, decorator)
         return decorator

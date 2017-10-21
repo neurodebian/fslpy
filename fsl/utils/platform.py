@@ -57,7 +57,7 @@ we are running standard wx Python.
 
 
 WX_PHOENIX = 2
-"""Identifier for the :attr:`Platform.wxFlavour` property, indicating that we 
+"""Identifier for the :attr:`Platform.wxFlavour` property, indicating that we
 are running wx Python/Phoenix.
 """
 
@@ -84,27 +84,26 @@ def isWidgetAlive(widget):
     """Returns ``True`` if the given ``wx.Window`` object is "alive" (i.e.
     has not been destroyed), ``False`` otherwise. Works in both wxPython
     and wxPython/Phoenix.
+
+    .. warning:: Don't try to test whether a ``wx.MenuItem`` has been
+                 destroyed, as it will probably result in segmentation
+                 faults. Check the parent ``wx.Menu`` instead.
     """
 
     import wx
 
-    if platform.wxFlavour == WX_PHOENIX:
-        return bool(widget)
-    
-    elif platform.wxFlavour == WX_PYTHON:
-        try:
-            # GetId seems to be available on all wx
-            # objects, despite not being documented.
-            # 
-            # I was originally calling IsEnabled,
-            # but this causes segfaults if called
-            # on a wx.MenuItem from within an
-            # event handler on that menu item!
-            widget.GetId()
-            return True
-        
-        except wx.PyDeadObjectError:
-            return False
+
+    if platform.wxFlavour == platform.WX_PHOENIX:
+        excType = RuntimeError
+    elif platform.wxFlavour == platform.WX_PYTHON:
+        excType = wx.PyDeadObjectError
+
+    try:
+        widget.GetParent()
+        return True
+
+    except excType:
+        return False
 
 
 class Platform(notifier.Notifier):
@@ -131,7 +130,7 @@ class Platform(notifier.Notifier):
        glIsSoftwareRenderer
     """
 
-    
+
     def __init__(self):
         """Create a ``Platform`` instance. """
 
@@ -146,6 +145,7 @@ class Platform(notifier.Notifier):
         self.isWidgetAlive = isWidgetAlive
 
         self.__inSSHSession = False
+        self.__inVNCSession = False
         self.__glVersion    = None
         self.__glRenderer   = None
         self.__glIsSoftware = None
@@ -163,19 +163,16 @@ class Platform(notifier.Notifier):
         except ImportError:
             self.__canHaveGui = False
 
+        # If one of the SSH_/VNC environment
+        # variables is set, then we're probably
+        # running over SSH/VNC.
+        sshVars = ['SSH_CLIENT', 'SSH_TTY']
+        vncVars = ['VNCDESKTOP', 'X2GO_SESSION', 'NXSESSIONID']
 
-        # If one of the SSH_ environment
-        # variables is set, and we're
-        # not running in a VNC session,
-        # then we're probably running
-        # over SSH.
-        inSSH = 'SSH_CLIENT' in os.environ or \
-                'SSH_TTY'    in os.environ
-        inVNC = 'VNCDESKTOP' in os.environ
+        self.__inSSHSession = any(s in os.environ for s in sshVars)
+        self.__inVNCSession = any(v in os.environ for v in vncVars)
 
-        self.__inSSHSession = inSSH and not inVNC
 
-                
     @property
     def os(self):
         """The operating system name. Whatever is returned by the built-in
@@ -183,7 +180,7 @@ class Platform(notifier.Notifier):
         """
         return builtin_platform.system()
 
-    
+
     @property
     def frozen(self):
         """``True`` if we are running in a compiled/frozen application,
@@ -201,7 +198,7 @@ class Platform(notifier.Notifier):
             return (self.canHaveGui and
                     app is not None and
                     app.IsMainLoopRunning())
-        
+
         except ImportError:
             return False
 
@@ -219,13 +216,26 @@ class Platform(notifier.Notifier):
         """
         return self.__inSSHSession
 
-    
+
+    @property
+    def inVNCSession(self):
+        """``True`` if this application is running over a VNC (or similar)
+        session, ``False`` otherwise. Currently, the following remote desktop
+        environments are detected:
+
+          - VNC
+          - x2go
+          - NoMachine
+        """
+        return self.__inVNCSession
+
+
     @property
     def wxPlatform(self):
         """One of :data:`WX_UNKNOWN`, :data:`WX_MAC_COCOA`,
         :data:`WX_MAC_CARBON`, or :data:`WX_GTK`, indicating the wx platform.
         """
-        
+
         if not self.haveGui:
             return WX_UNKNOWN
 
@@ -243,10 +253,10 @@ class Platform(notifier.Notifier):
             if platform is WX_UNKNOWN:
                 log.warning('Could not determine wx platform from '
                             'information: {}'.format(pi))
- 
+
         return platform
 
-    
+
     @property
     def wxFlavour(self):
         """One of :data:`WX_UNKNOWN`, :data:`WX_PYTHON` or :data:`WX_PHOENIX`,
@@ -262,7 +272,7 @@ class Platform(notifier.Notifier):
         isPhoenix = False
 
         for tag in pi:
-            if 'phoenix' in tag: 
+            if 'phoenix' in tag:
                 isPhoenix = True
                 break
 
@@ -294,7 +304,7 @@ class Platform(notifier.Notifier):
         elif value == '':          value = None
         elif not op.exists(value): value = None
         elif not op.isdir(value):  value = None
-            
+
         self.__fsldir = value
 
         if value is not None:
@@ -317,7 +327,7 @@ class Platform(notifier.Notifier):
         """
         return self.__fslVersion
 
-        
+
     @property
     def glVersion(self):
         """Returns the available OpenGL version, or ``None`` if it has not
@@ -325,7 +335,7 @@ class Platform(notifier.Notifier):
         """
         return self.__glVersion
 
-    
+
     @glVersion.setter
     def glVersion(self, value):
         """Set the available OpenGL version. """
@@ -353,9 +363,6 @@ class Platform(notifier.Notifier):
         # necessary.
         self.__glIsSoftware = any((
             'software' in value,
-            'mesa'     in value,
-            'gallium'  in value,
-            'llvmpipe' in value,
             'chromium' in value,
         ))
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-# 
+#
 # image.py - Provides the :class:`Image` class, for representing 3D/4D NIFTI
 #            images.
 #
 # Author: Paul McCarthy <pauldmccarthy@gmail.com>
 #
 """This module provides the :class:`Nifti` and :class:`Image` classes, for
-representing 3D/4D NIFTI1 and NIFTI2 images. The ``nibabel`` package is used
+representing NIFTI1 and NIFTI2 images. The ``nibabel`` package is used
 for file I/O.
 
 
@@ -23,7 +23,7 @@ and file names:
    :nosignatures:
 
    looksLikeImage
-   addExt 
+   addExt
    splitExt
    getExt
    removeExt
@@ -34,9 +34,11 @@ and file names:
 
 import                      os
 import os.path           as op
+import                      string
 import                      logging
 
-import                      six 
+import                      six
+import                      deprecation
 import numpy             as np
 
 import nibabel           as nib
@@ -64,25 +66,25 @@ class Nifti(notifier.Notifier):
     When a ``Nifti`` instance is created, it adds the following attributes
     to itself:
 
-    
+
     ================= ====================================================
     ``header``        The :mod:`nibabel` NIFTI1/NIFTI2/Analyze header
                       object.
-    
+
     ``shape``         A list/tuple containing the number of voxels along
                       each image dimension.
-    
-    ``pixdim``        A list/tuple containing the length of one voxel 
+
+    ``pixdim``        A list/tuple containing the length of one voxel
                       along each image dimension.
-    
+
     ``voxToWorldMat`` A 4*4 array specifying the affine transformation
                       for transforming voxel coordinates into real world
                       coordinates.
-    
+
     ``worldToVoxMat`` A 4*4 array specifying the affine transformation
                       for transforming real world coordinates into voxel
                       coordinates.
-    
+
     ``intent``        The NIFTI intent code specified in the header (or
                       :attr:`.constants.NIFTI_INTENT_NONE` for Analyze
                       images).
@@ -94,28 +96,28 @@ class Nifti(notifier.Notifier):
     writing code that should work with all three. Use the :meth:`niftiVersion`
     property if you need to know what type of image you are dealing with.
 
-    
+
     The ``shape`` attribute may not precisely match the image shape as
     reported in the NIFTI header, because trailing dimensions of size 1 are
     squeezed out. See the :meth:`__determineShape` and :meth:`mapIndices`
     methods.
 
-    
+
     **The affine transformation**
 
-    
+
     The :meth:`voxToWorldMat` and :meth:`worldToVoxMat` attributes contain
     transformation matrices for transforming between voxel and world
     coordinates. The ``Nifti`` class follows the same process as ``nibabel``
     in selecting the affine (see
     http://nipy.org/nibabel/nifti_images.html#the-nifti-affines):
 
-    
+
      1. If ``sform_code != 0`` ("unknown") use the sform affine; else
      2. If ``qform_code != 0`` ("unknown") use the qform affine; else
      3. Use the fall-back affine.
 
-    
+
     However, the *fall-back* affine used by the ``Nifti`` class differs to
     that used by ``nibabel``. In ``nibabel``, the origin (world coordinates
     (0, 0, 0)) is set to the centre of the image. Here in the ``Nifti``
@@ -127,13 +129,13 @@ class Nifti(notifier.Notifier):
     is an Analyze image). When you do so:
 
      - Only the ``sform`` of the underlying ``Nifti1Header`` object is changed
-    
+
      - The ``qform`` is not modified.
-    
+
      - If the ``sform_code`` was previously set to ``NIFTI_XFORM_UNKNOWN``,
        it is changed to ``NIFTI_XFORM_ALIGNED_ANAT``. Otherwise, the
        ``sform_code`` is not modified.
-    
+
 
     **ANALYZE support**
 
@@ -146,7 +148,7 @@ class Nifti(notifier.Notifier):
 
       - The affine will be set to a diagonal matrix with the header pixdims as
         its elements (with the X pixdim negated), and an offset specified by
-        the ANALYZE ``origin`` fields. Construction of the affine is handled 
+        the ANALYZE ``origin`` fields. Construction of the affine is handled
         by ``nibabel``.
 
       - The :meth:`niftiVersion` method will return ``0``.
@@ -158,7 +160,7 @@ class Nifti(notifier.Notifier):
     **Notification**
 
 
-    The ``Nifti`` class implements the :class:`.Notifier` interface - 
+    The ``Nifti`` class implements the :class:`.Notifier` interface -
     listeners may register to be notified on the following topics:
 
     =============== ========================================================
@@ -167,14 +169,14 @@ class Nifti(notifier.Notifier):
     =============== ========================================================
     """
 
-    
+
     def __init__(self, header):
         """Create a ``Nifti`` object.
 
-        :arg header: A :class:`nibabel.nifti1.Nifti1Header`, 
+        :arg header: A :class:`nibabel.nifti1.Nifti1Header`,
                        :class:`nibabel.nifti2.Nifti2Header`, or
                        ``nibabel.analyze.AnalyzeHeader`` to be used as the
-                       image header. 
+                       image header.
         """
 
         # Nifti2Header is a sub-class of Nifti1Header,
@@ -185,9 +187,6 @@ class Nifti(notifier.Notifier):
 
         header                   = header
         origShape, shape, pixdim = self.__determineShape(header)
-
-        if len(shape) < 3 or len(shape) > 4:
-            raise RuntimeError('Only 3D or 4D images are supported')
 
         voxToWorldMat = self.__determineTransform(header)
         worldToVoxMat = transform.invert(voxToWorldMat)
@@ -201,7 +200,7 @@ class Nifti(notifier.Notifier):
         self.__voxToWorldMat = voxToWorldMat
         self.__worldToVoxMat = worldToVoxMat
 
-    
+
     def __determineTransform(self, header):
         """Called by :meth:`__init__`. Figures out the voxel-to-world
         coordinate transformation matrix that is associated with this
@@ -242,7 +241,7 @@ class Nifti(notifier.Notifier):
         # then we can't assume that the transform
         # matrices are valid. So we fall back to a
         # pixdim scaling matrix.
-        # 
+        #
         # n.b. For images like this, nibabel returns
         # a scaling matrix where the centre voxel
         # corresponds to world location (0, 0, 0).
@@ -253,7 +252,7 @@ class Nifti(notifier.Notifier):
             voxToWorldMat = transform.scaleOffsetXform(pixdims, 0)
 
         # Otherwise we let nibabel decide
-        # which transform to use. 
+        # which transform to use.
         else:
             voxToWorldMat = np.array(header.get_best_affine())
 
@@ -261,9 +260,9 @@ class Nifti(notifier.Notifier):
 
 
     def __determineShape(self, header):
-        """This method is called by :meth:`__init__`. It figures out the actual 
-        shape of the image data, and the zooms/pixdims for each data axis. Any 
-        empty trailing dimensions are squeezed, but the returned shape is 
+        """This method is called by :meth:`__init__`. It figures out the actual
+        shape of the image data, and the zooms/pixdims for each data axis. Any
+        empty trailing dimensions are squeezed, but the returned shape is
         guaranteed to be at least 3 dimensions. Returns:
 
          - A sequence/tuple containing the image shape, as reported in the
@@ -286,8 +285,35 @@ class Nifti(notifier.Notifier):
             pixdims = header['pixdim'][1:]
 
         pixdims = pixdims[:len(shape)]
-        
+
         return origShape, shape, pixdims
+
+
+    def strval(self, key):
+        """Returns the specified NIFTI header field, converted to a python
+        string, correctly null-terminated, and with non-printable characters
+        removed.
+
+        This method is used to sanitise some NIFTI header fields. The default
+        Python behaviour for converting a sequence of bytes to a string is to
+        strip all termination characters (bytes with value of ``0x00``) from
+        the end of the sequence.
+
+        This default behaviour does not handle the case where a sequence of
+        bytes which did contain a long string is subsequently overwritten with
+        a shorter string - the short string will be terminated, but that
+        termination character will be followed by the remainder of the
+        original string.
+        """
+
+        val = self.header[key]
+
+        try:    val = bytes(val).partition(b'\0')[0]
+        except: val = bytes(val)
+
+        val = val.decode('ascii')
+
+        return ''.join([c for c in val if c in string.printable]).strip()
 
 
     @property
@@ -314,7 +340,7 @@ class Nifti(notifier.Notifier):
         """Returns a tuple containing the image data shape. """
         return tuple(self.__shape)
 
-    
+
     @property
     def pixdim(self):
         """Returns a tuple containing the image pixdims (voxel sizes)."""
@@ -421,14 +447,26 @@ class Nifti(notifier.Notifier):
         # How convenient - nibabel has a function
         # that does the dirty work for us.
         return fileslice.canonical_slicers(sliceobj, self.__origShape)
- 
-        
-    # TODO: Remove this method, and use the shape attribute directly
+
+
+    @property
+    def ndims(self):
+        """Returns the number of dimensions in this image. This number may not
+        match the number of dimensions specified in the NIFTI header, as
+        trailing dimensions of length 1 are ignored. But it is guaranteed to be
+        at least 3.
+        """
+        return len(self.__shape)
+
+
+    @deprecation.deprecated(deprecated_in='1.1.0',
+                            removed_in='2.0.0',
+                            details='Use ndims instead')
     def is4DImage(self):
         """Returns ``True`` if this image is 4D, ``False`` otherwise. """
-        return len(self.__shape) > 3 and self.__shape[3] > 1 
+        return len(self.__shape) > 3 and self.__shape[3] > 1
 
-    
+
     def getXFormCode(self, code=None):
         """This method returns the code contained in the NIFTI header,
         indicating the space to which the (transformed) image is oriented.
@@ -462,7 +500,7 @@ class Nifti(notifier.Notifier):
         # Otherwise, if the qform is
         # present, we return that.
         else:
-            
+
             sform_code = self.header['sform_code']
             qform_code = self.header['qform_code']
 
@@ -470,9 +508,9 @@ class Nifti(notifier.Notifier):
             elif qform_code != constants.NIFTI_XFORM_UNKNOWN: code = qform_code
 
         # Invalid values
-        if   code > 4: code = constants.NIFTI_XFORM_UNKNOWN
-        elif code < 0: code = constants.NIFTI_XFORM_UNKNOWN
-        
+        if code not in range(5):
+            code = constants.NIFTI_XFORM_UNKNOWN
+
         return int(code)
 
     # TODO Check what has worse performance - hashing
@@ -516,7 +554,16 @@ class Nifti(notifier.Notifier):
 
 
     @memoize.Instanceify(memoize.memoize)
+    @deprecation.deprecated(deprecated_in='1.2.0',
+                            removed_in='2.0.0',
+                            details='Use voxToScaledVoxMat instead')
     def voxelsToScaledVoxels(self):
+        """See :meth:`voxToScaledVoxMat`."""
+        return self.voxToScaledVoxMat
+
+
+    @property
+    def voxToScaledVoxMat(self):
         """Returns a transformation matrix which transforms from voxel
         coordinates into scaled voxel coordinates, with a left-right flip
         if the image appears to be stored in neurological order.
@@ -525,17 +572,37 @@ class Nifti(notifier.Notifier):
         _format_of_the_matrix_used_by_FLIRT.2C_and_how_does_it_relate_to\
         _the_transformation_parameters.3F
         """
+        return self.__voxToScaledVoxMat()
+
+
+    @memoize.Instanceify(memoize.memoize)
+    def __voxToScaledVoxMat(self):
+        """See :meth:`voxToScaledVoxMat`. """
 
         shape          = list(self.shape[ :3])
         pixdim         = list(self.pixdim[:3])
         voxToPixdimMat = np.diag(pixdim + [1.0])
-        
+
         if self.isNeurological():
             x              = (shape[0] - 1) * pixdim[0]
             flip           = transform.scaleOffsetXform([-1, 1, 1], [x, 0, 0])
             voxToPixdimMat = transform.concat(flip, voxToPixdimMat)
 
         return voxToPixdimMat
+
+
+    @property
+    def scaledVoxToVoxMat(self):
+        """Returns a transformation matrix which transforms from scaled voxels
+        into voxels, the inverse of the :meth:`voxToScaledVoxMat` transform.
+        """
+        return self.__scaledVoxToVoxMat()
+
+
+    @memoize.Instanceify(memoize.memoize)
+    def __scaledVoxToVoxMat(self):
+        """See :meth:`scaledVoxToVoxMat`. """
+        return transform.invert(self.voxToScaledVoxMat)
 
 
     def sameSpace(self, other):
@@ -552,7 +619,7 @@ class Nifti(notifier.Notifier):
 
 
     def getOrientation(self, axis, xform):
-        """Returns a code representing the orientation of the specified 
+        """Returns a code representing the orientation of the specified
         axis in the input coordinate system of the given transformation
         matrix.
 
@@ -567,7 +634,7 @@ class Nifti(notifier.Notifier):
 
         This method returns one of the following values, indicating the
         direction in which coordinates along the specified axis increase:
-        
+
           - :attr:`~.constants.ORIENT_L2R`:     Left to right
           - :attr:`~.constants.ORIENT_R2L`:     Right to left
           - :attr:`~.constants.ORIENT_A2P`:     Anterior to posterior
@@ -586,26 +653,26 @@ class Nifti(notifier.Notifier):
         """
 
         if self.getXFormCode() == constants.NIFTI_XFORM_UNKNOWN:
-            return constants.ORIENT_UNKNOWN 
-        
+            return constants.ORIENT_UNKNOWN
+
         code = nib.orientations.aff2axcodes(
             xform,
             ((constants.ORIENT_R2L, constants.ORIENT_L2R),
              (constants.ORIENT_A2P, constants.ORIENT_P2A),
              (constants.ORIENT_S2I, constants.ORIENT_I2S)))[axis]
 
-        return code 
+        return code
 
 
 class Image(Nifti):
-    """Class which represents a 3D/4D NIFTI image. Internally, the image is
+    """Class which represents a NIFTI image. Internally, the image is
     loaded/stored using a :mod:`nibabel.nifti1.Nifti1Image` or
     :mod:`nibabel.nifti2.Nifti2Image`, and data access managed by a
     :class:`.ImageWrapper`.
 
-    
+
     In addition to the attributes added by the :meth:`Nifti.__init__` method,
-    the following attributes/properties are present on an ``Image`` instance 
+    the following attributes/properties are present on an ``Image`` instance
     as properties (https://docs.python.org/2/library/functions.html#property):
 
 
@@ -618,36 +685,36 @@ class Image(Nifti):
                    describing its origin.
 
     ``nibImage``   A reference to the ``nibabel`` NIFTI image object.
-    
+
     ``saveState``  A boolean value which is ``True`` if this image is
                    saved to disk, ``False`` if it is in-memory, or has
                    been edited.
-    
+
     ``dataRange``  The minimum/maximum values in the image. Depending upon
                    the value of the ``calcRange`` parameter to
                    :meth:`__init__`, this may be calculated when the ``Image``
-                   is created, or may be incrementally updated as more image 
+                   is created, or may be incrementally updated as more image
                    data is loaded from disk.
     ============== ===========================================================
 
-    
+
     The ``Image`` class adds some :class:`.Notifier` topics to those which are
     already provided by the :class:`Nifti` class - listeners may register to
     be notified of changes to the above properties, by registering on the
     following _topic_ names (see the :class:`.Notifier` class documentation):
 
-    
+
     =============== ======================================================
     ``'data'``      This topic is notified whenever the image data changes
                     (via the :meth:`__setitem__` method). The indices/
                     slices of the portion of data that was modified is
                     passed to registered listeners as the notification
                     value (see :meth:`.Notifier.notify`).
-    
+
     ``'saveState'`` This topic is notified whenever the saved state of the
                     image changes (i.e. data or ``voxToWorldMat`` is
                     edited, or the image saved to disk).
-    
+
     ``'dataRange'`` This topic is notified whenever the image data range
                     is changed/adjusted.
     =============== ======================================================
@@ -662,10 +729,11 @@ class Image(Nifti):
                  loadData=True,
                  calcRange=True,
                  indexed=False,
-                 threaded=False):
+                 threaded=False,
+                 **kwargs):
         """Create an ``Image`` object with the given image data or file name.
 
-        :arg image:     A string containing the name of an image file to load, 
+        :arg image:     A string containing the name of an image file to load,
                         or a :mod:`numpy` array, or a :mod:`nibabel` image
                         object.
 
@@ -677,7 +745,7 @@ class Image(Nifti):
                         image header. Not applied to images loaded from file,
                         or existing :mod:`nibabel` images.
 
-        :arg xform:     A :math:`4\\times 4` affine transformation matrix 
+        :arg xform:     A :math:`4\\times 4` affine transformation matrix
                         which transforms voxel coordinates into real world
                         coordinates. If not provided, and a ``header`` is
                         provided, the transformation in the header is used.
@@ -690,7 +758,7 @@ class Image(Nifti):
                         from disk. In either case, the image data is
                         accessed through an :class:`.ImageWrapper` instance.
                         The data may be loaded into memory later on via the
-                        :meth:`loadData` method. 
+                        :meth:`loadData` method.
 
         :arg calcRange: If ``True`` (the default), the image range is
                         calculated immediately (vi a call to
@@ -698,7 +766,7 @@ class Image(Nifti):
                         incrementally updated as more data is read from memory
                         or disk.
 
-        :arg indexed:   If ``True``, and the file is gzipped, it is opened 
+        :arg indexed:   If ``True``, and the file is gzipped, it is opened
                         using the :mod:`indexed_gzip` package. Otherwise the
                         file is opened by ``nibabel``. Ignored if ``loadData``
                         is ``True``.
@@ -706,6 +774,9 @@ class Image(Nifti):
         :arg threaded:  If ``True``, the :class:`.ImageWrapper` will use a
                         separate thread for data range calculation. Defaults
                         to ``False``. Ignored if ``loadData`` is ``True``.
+
+        All other arguments are passed through to the ``nibabel.load`` function
+        (if it is called).
         """
 
         nibImage   = None
@@ -735,10 +806,10 @@ class Image(Nifti):
             # Otherwise we let nibabel
             # manage the file reference(s)
             else:
-                nibImage  = nib.load(image)
-                
+                nibImage  = nib.load(image, **kwargs)
+
             dataSource = image
- 
+
         # Or a numpy array - we wrap it in a nibabel image,
         # with an identity transformation (each voxel maps
         # to 1mm^3 in real world space)
@@ -750,7 +821,7 @@ class Image(Nifti):
 
             # We default to NIFTI1 and not
             # NIFTI2, because the rest of
-            # FSL is not yet NIFTI2 compatible. 
+            # FSL is not yet NIFTI2 compatible.
             if header is None:
                 ctr = nib.nifti1.Nifti1Image
 
@@ -759,34 +830,34 @@ class Image(Nifti):
             if isinstance(header, nib.nifti2.Nifti2Header):
                 ctr = nib.nifti2.Nifti2Image
             elif isinstance(header, nib.nifti1.Nifti1Header):
-                ctr = nib.nifti1.Nifti1Image 
+                ctr = nib.nifti1.Nifti1Image
             elif isinstance(header, nib.analyze.AnalyzeHeader):
                 ctr = nib.analyze.AnalyzeImage
 
             nibImage = ctr(image, xform, header=header)
-            
+
         # otherwise, we assume that it is a nibabel image
         else:
             nibImage = image
 
-        # Figure out the name of this image, if 
+        # Figure out the name of this image, if
         # it has not beenbeen explicitly passed in
         if name is None:
-            
+
             # If this image was loaded
             # from disk, use the file name.
             if isinstance(image, six.string_types):
                 name = removeExt(op.basename(image))
-            
+
             # Or the image was created from a numpy array
             elif isinstance(image, np.ndarray):
                 name = 'Numpy array'
-            
+
             # Or image from a nibabel image
             else:
                 name = 'Nibabel image'
- 
-        Nifti.__init__(self, nibImage.get_header())
+
+        Nifti.__init__(self, nibImage.header)
 
         self.name                = name
         self.__lName             = '{}_{}'.format(id(self), self.name)
@@ -808,9 +879,9 @@ class Image(Nifti):
         if calcRange:
             self.calcRange()
 
-        self.__imageWrapper.register(self.__lName, self.__dataRangeChanged) 
+        self.__imageWrapper.register(self.__lName, self.__dataRangeChanged)
 
-        
+
     def __hash__(self):
         """Returns a number which uniquely idenfities this ``Image`` instance
         (the result of ``id(self)``).
@@ -824,7 +895,7 @@ class Image(Nifti):
                                    self.name,
                                    self.dataSource)
 
-        
+
     def __repr__(self):
         """See the :meth:`__str__` method."""
         return self.__str__()
@@ -832,11 +903,11 @@ class Image(Nifti):
 
     def __del__(self):
         """Closes any open file handles, and clears some references. """
-        
+
         self.__nibImage     = None
         self.__imageWrapper = None
-        
-        if self.__fileobj is not None:
+
+        if getattr(self, '__fileobj', None) is not None:
             self.__fileobj.close()
 
 
@@ -845,8 +916,8 @@ class Image(Nifti):
         access to the image data.
         """
         return self.__imageWrapper
-        
-    
+
+
     @property
     def dataSource(self):
         """Returns the data source (e.g. file name) that this ``Image`` was
@@ -854,14 +925,14 @@ class Image(Nifti):
         """
         return self.__dataSource
 
-    
+
     @property
     def nibImage(self):
         """Returns a reference to the ``nibabel`` NIFTI image instance.
         """
         return self.__nibImage
 
-    
+
     @property
     def saveState(self):
         """Returns ``True`` if this ``Image`` has been saved to disk, ``False``
@@ -869,7 +940,7 @@ class Image(Nifti):
         """
         return self.__saveState
 
-    
+
     @property
     def dataRange(self):
         """Returns the image data range as a  ``(min, max)`` tuple. If the
@@ -893,17 +964,17 @@ class Image(Nifti):
 
         return drange
 
-    
+
     @property
     def dtype(self):
         """Returns the ``numpy`` data type of the image data. """
-        
+
         # Get the data type from the
         # first voxel in the image
         coords = [0] * len(self.__nibImage.shape)
         return self.__nibImage.dataobj[tuple(coords)].dtype
 
-    
+
     @Nifti.voxToWorldMat.setter
     def voxToWorldMat(self, xform):
         """Overrides the :meth:`Nifti.voxToWorldMat` property setter.
@@ -912,12 +983,12 @@ class Image(Nifti):
         updates the header, and this implementation makes sure the
         image is also updated.
         """
-        
+
         Nifti.voxToWorldMat.fset(self, xform)
-        
+
         xform =     self.voxToWorldMat
         code  = int(self.header['sform_code'])
-        
+
         self.__nibImage.set_sform(xform, code)
 
 
@@ -943,7 +1014,7 @@ class Image(Nifti):
 
         :arg sizethres: If not ``None``, specifies an image size threshold
                         (total number of bytes). If the number of bytes in
-                        the image is greater than this threshold, the range 
+                        the image is greater than this threshold, the range
                         is calculated on a sample (the first volume for a
                         4D image, or slice for a 3D image).
         """
@@ -961,16 +1032,15 @@ class Image(Nifti):
             log.debug('{}: Forcing calculation of full '
                       'data range'.format(self.name))
             self.__imageWrapper[:]
-            
+
         else:
             log.debug('{}: Calculating data range '
                       'from sample'.format(self.name))
 
             # Otherwise if the number of values in the
-            # image is bigger than the size threshold, 
+            # image is bigger than the size threshold,
             # we'll calculate the range from a sample:
-            if len(self.shape) == 3: self.__imageWrapper[:, :, 0]
-            else:                    self.__imageWrapper[:, :, :, 0]
+            self.__imageWrapper[..., 0]
 
 
     def loadData(self):
@@ -1024,13 +1094,13 @@ class Image(Nifti):
             nib.save(self.__nibImage, filename)
             self.__fileobj.close()
             self.__nibImage, self.__fileobj = loadIndexedImageFile(filename)
-            self.header = self.__nibImage.get_header()
+            self.header = self.__nibImage.header
 
             # We have to create a new ImageWrapper
             # instance too, as we have just destroyed
             # the nibabel image we gave to the last
             # one.
-            self.__imageWrapper.deregister(self.__lName) 
+            self.__imageWrapper.deregister(self.__lName)
             self.__imageWrapper = imagewrapper.ImageWrapper(
                 self.nibImage,
                 self.name,
@@ -1041,7 +1111,7 @@ class Image(Nifti):
 
         self.__dataSource = filename
         self.__saveState  = True
-        
+
         self.notify(topic='saveState')
 
 
@@ -1062,7 +1132,7 @@ class Image(Nifti):
         :arg sliceobj: Something which can slice the image data.
         :arg values:   New image data.
 
-        .. note:: Modifying image data will force the entire image to be 
+        .. note:: Modifying image data will force the entire image to be
                   loaded into memory if it has not already been loaded.
         """
         values = np.array(values)
@@ -1086,7 +1156,7 @@ class Image(Nifti):
                 self.notify(topic='saveState')
 
             if not np.all(np.isclose(oldRange, newRange)):
-                self.notify(topic='dataRange') 
+                self.notify(topic='dataRange')
 
 
 ALLOWED_EXTENSIONS = ['.nii.gz', '.nii', '.img', '.hdr', '.img.gz', '.hdr.gz']
@@ -1127,7 +1197,7 @@ def looksLikeImage(filename, allowedExts=None):
               ``myfile``).
 
     :arg filename:    The file name to test.
-    
+
     :arg allowedExts: A list of strings containing the allowed file
                       extensions - defaults to :attr:`ALLOWED_EXTENSIONS`.
     """
@@ -1185,7 +1255,7 @@ def defaultExt():
         'NIFTI_PAIR' : '.img',
         'NIFTI_GZ'   : '.nii.gz',
     }
-    
+
     outputType = os.environ.get('FSLOUTPUTTYPE', 'NIFTI_GZ')
 
     return options.get(outputType, '.nii.gz')
@@ -1200,7 +1270,7 @@ def loadIndexedImageFile(filename):
 
     import                 threading
     import indexed_gzip as igzip
-    
+
     log.debug('Loading {} using indexed gzip'.format(filename))
 
     # guessed_image_type returns a
@@ -1241,12 +1311,12 @@ def read_segments(fileobj, segments, n_bytes):
     """
 
     from mmap import mmap
-    
+
     try:
         # fileobj is a nibabel.openers.ImageOpener - the
         # actual file is available via the fobj attribute
         lock = getattr(fileobj.fobj, '_arrayproxy_lock')
-        
+
     except:
         return fileslice.orig_read_segments(fileobj, segments, n_bytes)
 
@@ -1263,25 +1333,25 @@ def read_segments(fileobj, segments, n_bytes):
             bytes = fileobj.read(length)
         finally:
             lock.release()
-            
+
         if len(bytes) != n_bytes:
             raise ValueError("Whoops, not enough data in file")
         return bytes
-    
+
     # More than one segment
     bytes = mmap(-1, n_bytes)
     for offset, length in segments:
 
         lock.acquire()
-        try: 
+        try:
             fileobj.seek(offset)
             bytes.write(fileobj.read(length))
         finally:
             lock.release()
-            
+
     if bytes.tell() != n_bytes:
         raise ValueError("Oh dear, n_bytes does not look right")
-    return bytes 
+    return bytes
 
 
 # Monkey-patch the above implementation into nibabel

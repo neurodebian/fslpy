@@ -35,14 +35,14 @@ def callFSL(*args):
     # assume it is a sequence containing
     # separate command and arguments.
     if len(args) == 1:
-        args = args.split()
+        args = args[0].split()
 
     args    = list(args)
     args[0] = op.join(fslplatform.fsldir, 'bin', args[0])
 
     log.debug('callfsl: {}'.format(' '.join(args)))
 
-    result = sp.check_output(args)
+    result = sp.check_output(args).decode('utf-8')
 
     log.debug('result: {}'.format(result))
 

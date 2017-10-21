@@ -10,6 +10,8 @@ a function:
  .. autosummary::
     :nosignatures:
 
+    memoize
+    Memoize
     Instanceify
     memoizeMD5
     skipUnchanged
@@ -17,7 +19,6 @@ a function:
 
 
 import logging
-
 import hashlib
 import functools
 import six
@@ -25,20 +26,91 @@ import six
 log = logging.getLogger(__name__)
 
 
-# TODO Make this a class, and add
-#      a "clearCache" method to it.
-def memoize(func):
+def memoize(func=None):
     """Memoize the given function by the value of the input arguments.
+
+    This function simply returns a :class:`Memoize` instance.
+    """
+
+    return Memoize(func)
+
+
+class Memoize(object):
+    """Decorator which can be used to memoize a function or method. Use like
+    so::
+
+        @memoize
+        def myfunc(*a, **kwa):
+            ...
+
+        @memoize()
+        def otherfunc(*a, **kwax):
+            ...
+
+    A ``Memoize`` instance maintains a cache which contains ``{args : value}``
+    mappings, where ``args`` are the input arguments to the function, and
+    ``value`` is the value that the function returned for those arguments.
+    When a memoized function is called with arguments that are present in the
+    cache, the cached values are returned, and the function itself is not
+    called.
+
+
+    The :meth:`invalidate` method may be used to clear the internal cache.
+
 
     Note that the arguments used for memoization must be hashable, as they are
     used as keys in a dictionary.
     """
 
-    cache      = {}
-    defaultKey = '_memoize_noargs_'
 
-    def wrapper(*a, **kwa):
+    def __init__(self, *args, **kwargs):
+        """Create a ``Memoize`` object.
+        """
 
+        self.__cache      = {}
+        self.__func       = None
+        self.__defaultKey = '_memoize_noargs_'
+
+        self.__setFunction(*args, **kwargs)
+
+
+    def invalidate(self, *args, **kwargs):
+        """Clears the internal cache. If no arguments are given, the entire
+        cache is cleared. Otherwise, only the cached value for the provided
+        arguments is cleared.
+        """
+
+        if len(args) + len(kwargs) == 0:
+            self.__cache = {}
+
+        else:
+            key = self.__makeKey(*args, **kwargs)
+
+            try:
+                self.__cache.pop(key)
+            except KeyError:
+                pass
+
+
+    def __setFunction(self, *args, **kwargs):
+        """Used internally to set the memoized function. """
+
+        if self.__func is not None:
+            return False
+
+        # A no-brackets style
+        # decorator was used
+        isfunc = (len(kwargs) == 0 and len(args) == 1 and callable(args[0]))
+
+        if isfunc:
+            self.__func = args[0]
+
+        return isfunc
+
+
+    def __makeKey(self, *a, **kwa):
+        """Constructs a key for use with the cache from the given arguments.
+        """
         key = []
 
         if a   is not None: key += list(a)
@@ -48,24 +120,35 @@ def memoize(func):
         # any arguments specified - use the
         # default cache key.
         if len(key) == 0:
-            key = [defaultKey]
+            key = [self.__defaultKey]
 
-        key = tuple(key)
-        
+        return tuple(key)
+
+
+    def __call__(self, *a, **kwa):
+        """Checks the cache against the given arguments. If a cached value
+        is present, it is returned. Otherwise the memoized function is called,
+        and its value is cached and returned.
+        """
+
+        if self.__setFunction(*a, **kwa):
+            return self
+
+        key = self.__makeKey(*a, **kwa)
+
         try:
-            result = cache[key]
+            result = self.__cache[key]
 
-            log.debug('Retrieved from cache[{}]: {}'.format(key, result))
+            log.debug(u'Retrieved from cache[{}]: {}'.format(key, result))
 
         except KeyError:
 
-            result     = func(*a, **kwa)
-            cache[key] = result
+            result            = self.__func(*a, **kwa)
+            self.__cache[key] = result
 
-            log.debug('Adding to cache[{}]: {}'.format(key, result))
+            log.debug(u'Adding to cache[{}]: {}'.format(key, result))
 
         return result
-    return wrapper
 
 
 def memoizeMD5(func):
@@ -82,8 +165,15 @@ def memoizeMD5(func):
 
         hashobj = hashlib.md5()
 
+        # Convert each arg to a string
+        # representation, then encode
+        # it into a sequence of (utf-8
+        # compatible) bytes , and take
+        # the hash of those bytes.
         for arg in args:
-            arg = six.u(str(arg)).encode('utf-8')
+            if not isinstance(arg, six.string_types):
+                arg = str(arg)
+            arg = arg.encode('utf-8')
             hashobj.update(arg)
 
         digest = hashobj.hexdigest()
@@ -94,7 +184,7 @@ def memoizeMD5(func):
 
         result = func(*args, **kwargs)
 
-        log.debug('Adding to MD5 cache[{}]: {}'.format(
+        log.debug(u'Adding to MD5 cache[{}]: {}'.format(
             digest, result))
 
         cache[digest] = result
@@ -123,24 +213,29 @@ def skipUnchanged(func):
     """
 
     import numpy as np
-    
+
     cache = {}
-    
+
     def wrapper(name, value, *args, **kwargs):
 
         oldVal = cache.get(name, None)
 
         if oldVal is not None:
-            
+
             oldIsArray = isinstance(oldVal, np.ndarray)
             newIsArray = isinstance(value,  np.ndarray)
             isarray    = oldIsArray or newIsArray
 
-            if isarray: nochange = np.all(oldVal == value)
-            else:       nochange =        oldVal == value
+            if isarray:
+                a = np.array(oldVal, copy=False)
+                b = np.array(value,  copy=False)
+
+                nochange = (a.shape == b.shape) and np.allclose(a, b)
+            else:
+                nochange = oldVal == value
 
             if nochange:
-                return False 
+                return False
 
         func(name, value, *args, **kwargs)
 
@@ -165,16 +260,16 @@ class Instanceify(object):
             def set(self, name, value):
                 self.__items[name] = value
 
-    
+
     Given this definition, a single :func:`skipUnchanged` decorator will be
     created and shared amongst all ``Container`` instances. This is not ideal,
     as the value cache created by the :func:`skipUnchanged` decorator should
     be associated with a single ``Container`` instance.
 
-    
+
     By redefining the ``Container`` class definition like so::
 
-    
+
         class Container(object):
 
             def __init__(self):
@@ -188,13 +283,13 @@ class Instanceify(object):
     a separate :func:`skipUnchanged` decorator is created for, and associated
     with, every ``Container`` instance.
 
-    
+
     This is achieved because an ``Instanceify`` instance is a descriptor. When
     first accessed as an instance attribute, an ``Instanceify`` instance will
     create the real decorator function, and replace itself on the instance.
     """
 
-    
+
     def __init__(self, realDecorator):
         """Create an ``Instanceify`` decorator.
 
