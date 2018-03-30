@@ -1,3 +1,9 @@
+fslpy (1.2.2-2) neurodebian; urgency=medium
+
+  * debian/patches/up_deprecation - relax versioning
+
+ -- Yaroslav Halchenko <debian@onerussian.com>  Fri, 30 Mar 2018 12:33:27 -0400
+
 fslpy (1.2.2-1) neurodebian; urgency=medium
 
   * New upstream release (missed many)
